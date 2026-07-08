@@ -1,0 +1,29 @@
+description: Install Vexcalibur into an isolated virtual environment and run it.
+
+parameters:
+  package_spec:
+    type: string
+    default: vexcalibur==0.1.1
+    description: Exact Vexcalibur package spec passed to pip install.
+  allow_development_package_spec:
+    type: boolean
+    default: false
+    description: Allow non-release package specs such as Git URLs. Use only for development workflows.
+  constraints_file:
+    type: string
+    default: ""
+    description: Absolute path to a pip constraints file applied to the isolated install.
+  args:
+    type: string
+    default: --help
+    description: Newline-separated arguments passed to the installed vexcalibur executable.
+
+steps:
+  - run:
+      name: Run Vexcalibur
+      environment:
+        VEXCALIBUR_ORB_PACKAGE_SPEC: << parameters.package_spec >>
+        VEXCALIBUR_ORB_ALLOW_DEVELOPMENT_PACKAGE_SPEC: << parameters.allow_development_package_spec >>
+        VEXCALIBUR_ORB_CONSTRAINTS_FILE: << parameters.constraints_file >>
+        VEXCALIBUR_ORB_ARGS: << parameters.args >>
+      command: <<include(scripts/run-vexcalibur.sh)>>

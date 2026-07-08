@@ -1,0 +1,22 @@
+description: Generate CycloneDX VEX from a repository SBOM and local findings after the first registry release.
+
+usage:
+  version: 2.1
+
+  orbs:
+    vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
+
+  workflows:
+    generate-vex:
+      jobs:
+        - vexcalibur/run:
+            args: |
+              generate
+              sbom/cyclonedx.xml
+              --offline
+              --findings-file
+              security/vexcalibur-findings.json
+              --timestamp
+              2026-06-23T00:00:00Z
+              --output
+              /tmp/cyclonedx-vex.json

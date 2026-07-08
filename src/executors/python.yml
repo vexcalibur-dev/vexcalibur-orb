@@ -1,0 +1,10 @@
+description: Python Docker executor for Vexcalibur.
+
+parameters:
+  tag:
+    type: string
+    default: "3.14"
+    description: Tag for the cimg/python Docker image.
+
+docker:
+  - image: cimg/python:<< parameters.tag >>

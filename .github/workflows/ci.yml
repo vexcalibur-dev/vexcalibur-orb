@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CIRCLECI_CLI_TELEMETRY_OPTOUT: "true"
+  CIRCLECI_CLI_VERSION: "0.1.38646"
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install development dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Validate shell
+        run: |
+          bash -n scripts/*.sh
+          bash -n src/scripts/*.sh
+          shellcheck scripts/*.sh
+          shellcheck src/scripts/*.sh
+
+      - name: Validate YAML and JSON
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import yaml
+
+          for path in sorted(Path(".").glob("**/*.yml")):
+              with path.open(encoding="utf-8") as stream:
+                  yaml.safe_load(stream)
+              print(f"YAML OK {path}")
+
+          for path in sorted(Path(".").glob("**/*.yaml")):
+              with path.open(encoding="utf-8") as stream:
+                  yaml.safe_load(stream)
+              print(f"YAML OK {path}")
+
+          for path in sorted(Path(".").glob("**/*.json")):
+              with path.open(encoding="utf-8") as stream:
+                  json.load(stream)
+              print(f"JSON OK {path}")
+          PY
+
+      - name: Install CircleCI CLI
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/circleci-cli"
+          export PATH="${RUNNER_TEMP}/circleci-cli:${PATH}"
+          curl -fLSs "https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/v${CIRCLECI_CLI_VERSION}/install.sh" \
+            -o "${RUNNER_TEMP}/install-circleci-cli.sh"
+          VERSION="${CIRCLECI_CLI_VERSION}" DESTDIR="${RUNNER_TEMP}/circleci-cli" \
+            bash "${RUNNER_TEMP}/install-circleci-cli.sh"
+          echo "${RUNNER_TEMP}/circleci-cli" >> "$GITHUB_PATH"
+
+      - name: Validate CircleCI orb and configs
+        run: scripts/validate-circleci.sh
+
+      - name: Scan code for secrets
+        run: git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline --
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests

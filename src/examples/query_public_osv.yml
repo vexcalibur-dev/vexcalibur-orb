@@ -1,0 +1,19 @@
+description: Query intentionally public package URLs with Vexcalibur after the first registry release.
+
+usage:
+  version: 2.1
+
+  orbs:
+    vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
+
+  workflows:
+    query-public-osv:
+      jobs:
+        - vexcalibur/run:
+            checkout: false
+            args: |
+              query-osv
+              --allow-public-osv
+              --
+              pkg:pypi/django@1.2
+              pkg:npm/minimist@0.0.8

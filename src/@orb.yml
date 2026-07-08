@@ -1,0 +1,9 @@
+version: 2.1
+
+description: >
+  Run Vexcalibur in CircleCI workflows to query vulnerability providers and
+  generate VEX documents from SBOMs.
+
+display:
+  home_url: "https://github.com/vexcalibur-dev/vexcalibur"
+  source_url: "https://github.com/vexcalibur-dev/vexcalibur-orb"

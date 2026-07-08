@@ -1,0 +1,88 @@
+version: 2.1
+
+orbs:
+  orb-tools: circleci/orb-tools@12.3
+  vexcalibur: {}
+
+filters: &filters
+  tags:
+    only: /.*/
+
+release-filters: &release-filters
+  branches:
+    ignore: /.*/
+  tags:
+    only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+dev-publish-filters: &dev-publish-filters
+  branches:
+    only: main
+  tags:
+    ignore: /.*/
+
+jobs:
+  command-help-test:
+    docker:
+      - image: cimg/python:3.14.1
+    steps:
+      - vexcalibur/run_vexcalibur:
+          args: --help
+
+  release-source-check:
+    docker:
+      - image: cimg/base:2026.01
+    steps:
+      - checkout
+      - run:
+          name: Confirm release tag is on main
+          command: |
+            set -euo pipefail
+            git fetch --no-tags origin main
+            git merge-base --is-ancestor "$CIRCLE_SHA1" origin/main
+
+workflows:
+  test-deploy:
+    jobs:
+      - command-help-test:
+          filters: *filters
+      - vexcalibur/run:
+          name: job-help-test
+          checkout: false
+          args: --help
+          filters: *filters
+      - orb-tools/pack:
+          name: pack-dev
+          filters: *dev-publish-filters
+      - approve-dev-publish:
+          type: approval
+          requires:
+            - pack-dev
+            - command-help-test
+            - job-help-test
+          filters: *dev-publish-filters
+      - orb-tools/publish:
+          name: publish-dev
+          orb_name: vexcalibur-dev/vexcalibur
+          vcs_type: github
+          pub_type: dev
+          context: orb-publishing
+          requires:
+            - approve-dev-publish
+          filters: *dev-publish-filters
+      - orb-tools/pack:
+          name: pack-release
+          filters: *release-filters
+      - release-source-check:
+          filters: *release-filters
+      - orb-tools/publish:
+          name: publish-release
+          orb_name: vexcalibur-dev/vexcalibur
+          vcs_type: github
+          pub_type: production
+          context: orb-publishing
+          requires:
+            - pack-release
+            - command-help-test
+            - job-help-test
+            - release-source-check
+          filters: *release-filters

@@ -1,0 +1,33 @@
+version: 2.1
+setup: true
+
+orbs:
+  orb-tools: circleci/orb-tools@12.3
+  shellcheck: circleci/shellcheck@3.2
+
+filters: &filters
+  tags:
+    only: /.*/
+
+workflows:
+  lint-pack:
+    jobs:
+      - orb-tools/lint:
+          filters: *filters
+      - orb-tools/pack:
+          filters: *filters
+      - orb-tools/review:
+          orb_name: vexcalibur-dev/vexcalibur
+          filters: *filters
+      - shellcheck/check:
+          filters: *filters
+      - orb-tools/continue:
+          pipeline_number: << pipeline.number >>
+          vcs_type: github
+          orb_name: vexcalibur
+          requires:
+            - orb-tools/lint
+            - orb-tools/pack
+            - orb-tools/review
+            - shellcheck/check
+          filters: *filters
