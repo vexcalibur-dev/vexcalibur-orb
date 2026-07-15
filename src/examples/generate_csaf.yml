@@ -1,0 +1,50 @@
+description: Generate CSAF 2.0 VEX from local inputs, then store it as an artifact.
+
+usage:
+  version: 2.1
+
+  orbs:
+    vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
+
+  jobs:
+    generate-csaf:
+      executor: vexcalibur/python
+      steps:
+        - checkout
+        - run:
+            name: Prepare artifact directory
+            command: mkdir -p artifacts
+        - vexcalibur/run_vexcalibur:
+            args: |
+              generate
+              sbom/cyclonedx.json
+              --offline
+              --findings-file
+              security/vexcalibur-findings.json
+              --format
+              csaf
+              --csaf-version
+              2.0
+              --csaf-document-id
+              EXAMPLE-CSAF-VEX-2026-001
+              --csaf-document-title
+              Example component exploitability assessment
+              --csaf-publisher-name
+              Example Product Security
+              --csaf-publisher-namespace
+              https://security.example.com
+              --csaf-publisher-category
+              vendor
+              --csaf-document-status
+              final
+              --timestamp
+              2026-07-15T00:00:00Z
+              --output
+              artifacts/example-csaf-vex-2026-001.json
+        - store_artifacts:
+            path: artifacts/example-csaf-vex-2026-001.json
+
+  workflows:
+    generate-csaf:
+      jobs:
+        - generate-csaf

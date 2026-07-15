@@ -104,7 +104,18 @@ circleci orb info "vexcalibur-dev/vexcalibur@${DEV_VERSION}"
 
 The command should show metadata for the Vexcalibur orb at that exact development version. Confirm the production `publish-release` job did not run on the branch pipeline.
 
-The continuation tests exercise the packed command and job with `--help`. They also generate and validate CycloneDX and OpenVEX JSON from checked-in local fixtures. The format test uses `--offline` and never queries public OSV.
+The continuation tests exercise the packed command and job with `--help`. They also generate and validate CycloneDX, OpenVEX, and CSAF JSON from checked-in local fixtures. The format test uses `--offline` and never queries public OSV.
+
+The CSAF check verifies:
+
+- Publisher and tracking metadata
+- The first document revision
+- The Vexcalibur generator version
+- A versioned product package URL
+- The `under_investigation` mapping
+- The absence of a root `$schema` property
+
+These checks run only in hosted CircleCI. Local configuration validation proves that the workflow parses, not that its jobs have executed.
 
 ## Publish a production version
 
@@ -142,7 +153,7 @@ Use a full three-part semantic version. The first intended release is `v0.1.0`; 
    circleci orb info "vexcalibur-dev/vexcalibur@${RELEASE_VERSION}"
    ```
 
-7. Open the registry page reported by the publish job and confirm the command, job, executor, examples, and parameter descriptions render as expected.
+7. Open the registry page reported by the publish job and confirm the command, job, executor, four examples, and parameter descriptions render as expected.
 
 8. After the first release exists, update the README and orb reference to replace the unpublished status with the verified registry version. Update the supported-version table in `SECURITY.md` in the same pull request.
 
