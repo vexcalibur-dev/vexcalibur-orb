@@ -2,13 +2,11 @@
 
 ## Report a vulnerability
 
-GitHub private vulnerability reporting is not enabled for this repository. Use the [private disclosure channel request](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/new?template=private_disclosure_request.yml) to ask maintainers for a private way to report the problem.
+Report a vulnerability through [GitHub private vulnerability reporting](https://github.com/vexcalibur-dev/vexcalibur-orb/security/advisories/new). Do not open a public issue for a suspected vulnerability.
 
 This project also follows the [shared `vexcalibur-dev` security policy](https://github.com/vexcalibur-dev/.github/security/policy).
 
-That request is a public issue. Include only a request for a private channel. Don't include the affected package or workflow, exploit details, reproduction steps, credentials, private package data, sensitive SBOM contents, logs, stack traces, or screenshots.
-
-After a maintainer provides a private channel, send the affected source or workflow, impact, reproduction steps, and any suggested mitigation there. The shared policy defines response and update targets for active reports.
+Include the affected source or workflow, impact, reproduction steps, and any suggested mitigation in the private report. Do not include credentials, private package data, or sensitive SBOM contents unless a maintainer confirms a suitable encrypted transfer method. The shared policy defines response and update targets for active reports.
 
 ## Supported versions
 

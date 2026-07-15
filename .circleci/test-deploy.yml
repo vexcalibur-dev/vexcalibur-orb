@@ -229,7 +229,7 @@ jobs:
             ]
             assert tracking["generator"] == {
                 "date": "2099-01-01T00:00:00Z",
-                "engine": {"name": "Vexcalibur", "version": "0.3.0"},
+                "engine": {"name": "Vexcalibur", "version": "0.3.1"},
             }
             products = csaf["product_tree"]["full_product_names"]
             assert len(products) == 1

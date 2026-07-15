@@ -18,6 +18,7 @@ PACKAGE_SPEC_FILES = [
     "src/scripts/run-vexcalibur.sh",
 ]
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+GITHUB_ACTION_SHA_PATTERN = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 CIRCLECI_CLI_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 EXACT_ORB_REFERENCE_PATTERN = re.compile(
     r"^[a-z0-9_.-]+/[a-z0-9_.-]+@[0-9]+\.[0-9]+\.[0-9]+$"
@@ -26,6 +27,11 @@ PINNED_CIRCLECI_CLI_IMAGE = (
     "circleci/circleci-cli:0.1.38646@sha256:"
     "2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926"  # pragma: allowlist secret
 )
+PINNED_SCORECARD_ACTIONS = [
+    "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+    "ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a",
+    "github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9",
+]
 
 
 class RepositoryConsistencyTests(unittest.TestCase):
@@ -37,7 +43,78 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
         all_specs = set().union(*specs_by_path.values())
 
-        self.assertEqual(all_specs, {"vexcalibur==0.3.0"}, specs_by_path)
+        self.assertEqual(all_specs, {"vexcalibur==0.3.1"}, specs_by_path)
+
+    def test_acceptance_output_uses_default_vexcalibur_version(self) -> None:
+        deployment = (REPO_ROOT / ".circleci/test-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            '"engine": {"name": "Vexcalibur", "version": "0.3.1"}',
+            deployment,
+        )
+        self.assertNotIn('"version": "0.3.0"', deployment)
+
+    def test_scorecard_workflow_is_pinned_and_least_privilege(self) -> None:
+        workflow = yaml.load(
+            (REPO_ROOT / ".github/workflows/scorecard.yml").read_text(
+                encoding="utf-8"
+            ),
+            Loader=yaml.BaseLoader,
+        )
+        self.assertEqual(workflow["permissions"], "read-all")
+        scorecard = workflow["jobs"]["scorecard"]
+        self.assertEqual(
+            scorecard["permissions"],
+            {
+                "actions": "read",
+                "checks": "read",
+                "contents": "read",
+                "id-token": "write",
+                "issues": "read",
+                "pull-requests": "read",
+                "security-events": "write",
+            },
+        )
+
+        action_references = [
+            step["uses"] for step in scorecard["steps"] if "uses" in step
+        ]
+        self.assertEqual(action_references, PINNED_SCORECARD_ACTIONS)
+        for action_reference in action_references:
+            self.assertRegex(action_reference, GITHUB_ACTION_SHA_PATTERN)
+
+        scorecard_step = next(
+            step
+            for step in scorecard["steps"]
+            if step.get("name") == "Run OpenSSF Scorecard"
+        )
+        self.assertEqual(scorecard_step["with"]["publish_results"], "false")
+
+    def test_dependabot_covers_python_and_github_actions(self) -> None:
+        configuration = yaml.safe_load(
+            (REPO_ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        )
+        updates = configuration["updates"]
+
+        self.assertEqual(
+            {update["package-ecosystem"] for update in updates},
+            {"pip", "github-actions"},
+        )
+        for update in updates:
+            self.assertEqual(update["directory"], "/")
+            self.assertEqual(update["schedule"]["interval"], "weekly")
+
+    def test_security_policy_uses_private_vulnerability_reporting(self) -> None:
+        policy = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "https://github.com/vexcalibur-dev/vexcalibur-orb/security/advisories/new",
+            policy,
+        )
+        self.assertNotIn("private vulnerability reporting is not enabled", policy)
+        self.assertNotIn("private_disclosure_request.yml", policy)
 
     def test_acceptance_fixtures_are_local_and_valid_json(self) -> None:
         config = (REPO_ROOT / ".circleci/test-deploy.yml").read_text(encoding="utf-8")

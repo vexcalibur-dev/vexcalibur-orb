@@ -82,7 +82,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
 
     def test_rejects_non_exact_release_by_default(self) -> None:
         env = base_env()
-        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur>=0.3.0"
+        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur>=0.3.1"
 
         result = run_script(env)
 
@@ -91,7 +91,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
 
     def test_rejects_prerelease_by_default(self) -> None:
         env = base_env()
-        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.0.dev1"
+        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.1.dev1"
 
         result = run_script(env)
 
@@ -130,7 +130,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
 
     def test_rejects_missing_python_command(self) -> None:
         env = base_env()
-        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.0"
+        env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.1"
         env["VEXCALIBUR_ORB_PYTHON"] = "vexcalibur-missing-python"
 
         result = run_script(env)
@@ -144,7 +144,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
             python_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
             env = base_env()
-            env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.0"
+            env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.1"
             env["VEXCALIBUR_ORB_PYTHON"] = str(python_path)
 
             result = run_script(env)
@@ -166,7 +166,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
                     "TMPDIR": str(root),
                     "VEXCALIBUR_FAKE_ARGS_LOG": str(args_log),
                     "VEXCALIBUR_ORB_PYTHON": str(fake_python),
-                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.0",
+                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.1",
                     "VEXCALIBUR_ORB_ARGS": "query-osv\n--\npkg:pypi/django@1.2\n",
                 }
             )
@@ -194,7 +194,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
                     "VEXCALIBUR_FAKE_ARGS_LOG": str(args_log),
                     "VEXCALIBUR_ORB_CONSTRAINTS_FILE": str(constraints_file),
                     "VEXCALIBUR_ORB_PYTHON": str(fake_python),
-                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.0",
+                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.1",
                     "VEXCALIBUR_ORB_ARGS": "--help",
                 }
             )
@@ -203,7 +203,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(
-                f"-I -m pip --isolated --no-cache-dir install --constraint {constraints_file} vexcalibur==0.3.0",
+                f"-I -m pip --isolated --no-cache-dir install --constraint {constraints_file} vexcalibur==0.3.1",
                 python_log.read_text(encoding="utf-8"),
             )
 
@@ -220,7 +220,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
                     "TMPDIR": str(root),
                     "VEXCALIBUR_ORB_CONSTRAINTS_FILE": str(root / "missing.txt"),
                     "VEXCALIBUR_ORB_PYTHON": str(fake_python),
-                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.0",
+                    "VEXCALIBUR_ORB_PACKAGE_SPEC": "vexcalibur==0.3.1",
                 }
             )
 
@@ -238,7 +238,7 @@ class RunVexcaliburScriptTests(unittest.TestCase):
 
             env = base_env()
             env["VEXCALIBUR_ORB_CONSTRAINTS_FILE"] = "constraints.txt"
-            env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.0"
+            env["VEXCALIBUR_ORB_PACKAGE_SPEC"] = "vexcalibur==0.3.1"
 
             result = run_script(env)
 
