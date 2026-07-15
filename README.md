@@ -20,7 +20,7 @@ The source currently has these defaults:
 
 | Surface | Default |
 | --- | --- |
-| Vexcalibur package | `vexcalibur==0.3.0` |
+| Vexcalibur package | `vexcalibur==0.3.1` |
 | Python image | `cimg/python:3.14` |
 | Repository checkout in the reusable job | Enabled |
 | Public OSV access | Disabled unless the caller passes `--allow-public-osv` |

@@ -71,7 +71,7 @@ validate_package_spec() {
     return
   fi
 
-  echo "package_spec must be an exact Vexcalibur release such as vexcalibur==0.3.0" >&2
+  echo "package_spec must be an exact Vexcalibur release such as vexcalibur==0.3.1" >&2
   echo "set allow_development_package_spec to true only for development workflows" >&2
   exit 2
 }

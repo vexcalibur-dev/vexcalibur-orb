@@ -11,7 +11,7 @@ The release will be a community orb. CircleCI organizations must [allow uncertif
 | Item | Current value |
 | --- | --- |
 | CircleCI configuration version | `2.1` |
-| Default Vexcalibur package | `vexcalibur==0.3.0` |
+| Default Vexcalibur package | `vexcalibur==0.3.1` |
 | Default executor image | `cimg/python:3.14` |
 | Intended first orb version | `0.1.0` |
 | VEX formats in generation examples | CycloneDX 1.6 VEX JSON, OpenVEX 0.2.0 JSON, and CSAF 2.0 VEX JSON |
@@ -28,7 +28,7 @@ The Python image uses a minor-version tag, so CircleCI can resolve a newer `3.14
 
 | Parameter | Type | Default | Contract |
 | --- | --- | --- | --- |
-| `package_spec` | string | `vexcalibur==0.3.0` | Package requirement passed as one operand to `pip install`. Without the development opt-in, it must name an exact stable Vexcalibur release. |
+| `package_spec` | string | `vexcalibur==0.3.1` | Package requirement passed as one operand to `pip install`. Without the development opt-in, it must name an exact stable Vexcalibur release. |
 | `allow_development_package_spec` | boolean | `false` | Skips the exact-release check when `true`. The leading-option and credentialed-URL checks still apply. |
 | `constraints_file` | string | `""` | Readable absolute path to a pip constraints file. An empty value applies no constraints. |
 | `args` | string | `--help` | Vexcalibur arguments. Each nonempty line becomes one literal argument. |
@@ -109,7 +109,7 @@ Input validation failures exit with status `2` before package installation.
 | Missing package spec | `package_spec is required` |
 | Leading pip option | `package_spec must not start with a pip option` |
 | Credential-bearing URL at the start of the spec | `package_spec must not contain embedded credentials` |
-| Non-release spec without the development opt-in | `package_spec must be an exact Vexcalibur release such as vexcalibur==0.3.0` followed by opt-in guidance |
+| Non-release spec without the development opt-in | `package_spec must be an exact Vexcalibur release such as vexcalibur==0.3.1` followed by opt-in guidance |
 | Relative constraints path | `constraints_file must be an absolute path: PATH` |
 | Missing, non-file, or unreadable constraints path | `constraints_file does not exist or is not readable: PATH` |
 | Missing or non-executable Python | `VEXCALIBUR_ORB_PYTHON is not executable: VALUE` |
@@ -124,7 +124,7 @@ If installation fails, the command returns pip's nonzero status. If Vexcalibur r
 | --- | --- | --- | --- |
 | `python_version` | string | `3.14` | Image tag passed to the `python` executor. |
 | `checkout` | boolean | `true` | Runs the CircleCI `checkout` step before Vexcalibur when `true`. |
-| `package_spec` | string | `vexcalibur==0.3.0` | Passed to the command unchanged. |
+| `package_spec` | string | `vexcalibur==0.3.1` | Passed to the command unchanged. |
 | `allow_development_package_spec` | boolean | `false` | Passed to the command unchanged. |
 | `constraints_file` | string | `""` | Passed to the command unchanged. |
 | `args` | string | `--help` | Passed to the command unchanged. |
@@ -176,11 +176,11 @@ The SBOM must contain a component whose `bom-ref` is `component:example-library`
 
 ### CSAF example contract
 
-The CSAF example reads local inputs and passes `--offline`. It supplies the document and publisher metadata required by Vexcalibur 0.3.0:
+Vexcalibur 0.3.0 introduced the CSAF output interface used by this example. The default 0.3.1 release preserves that interface and adds input, provider-response, and generated-output boundary hardening. The example reads local inputs, passes `--offline`, and supplies the required document and publisher metadata:
 
 | Option | Example value | Contract |
 | --- | --- | --- |
-| `--csaf-version` | `2.0` | Vexcalibur 0.3.0 accepts only CSAF 2.0. |
+| `--csaf-version` | `2.0` | Vexcalibur 0.3.1 accepts only CSAF 2.0. |
 | `--csaf-document-id` | `EXAMPLE-CSAF-VEX-2026-001` | Publisher-controlled tracking ID. |
 | `--csaf-document-title` | `Example component exploitability assessment` | Human-readable document title. |
 | `--csaf-publisher-name` | `Example Product Security` | Name of the organization responsible for the document. |
