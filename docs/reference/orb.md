@@ -1,6 +1,6 @@
 # Orb interface reference
 
-The Vexcalibur orb provides one command, one job, one executor, and three examples. It installs the selected Vexcalibur Python package at run time and invokes the package's `vexcalibur` executable.
+The Vexcalibur orb provides one command, one job, one executor, and four examples. It installs the selected Vexcalibur Python package at run time and invokes the package's `vexcalibur` executable.
 
 The orb has not been published. References to `vexcalibur-dev/vexcalibur@0.1.0` in source examples describe the intended first registry release, not an available version.
 
@@ -11,10 +11,10 @@ The release will be a community orb. CircleCI organizations must [allow uncertif
 | Item | Current value |
 | --- | --- |
 | CircleCI configuration version | `2.1` |
-| Default Vexcalibur package | `vexcalibur==0.2.0` |
+| Default Vexcalibur package | `vexcalibur==0.3.0` |
 | Default executor image | `cimg/python:3.14` |
 | Intended first orb version | `0.1.0` |
-| VEX formats in generation examples | CycloneDX 1.6 VEX JSON and OpenVEX 0.2.0 JSON |
+| VEX formats in generation examples | CycloneDX 1.6 VEX JSON, OpenVEX 0.2.0 JSON, and CSAF 2.0 VEX JSON |
 | Registry home | `https://github.com/vexcalibur-dev/vexcalibur` |
 | Orb source | `https://github.com/vexcalibur-dev/vexcalibur-orb` |
 
@@ -28,7 +28,7 @@ The Python image uses a minor-version tag, so CircleCI can resolve a newer `3.14
 
 | Parameter | Type | Default | Contract |
 | --- | --- | --- | --- |
-| `package_spec` | string | `vexcalibur==0.2.0` | Package requirement passed as one operand to `pip install`. Without the development opt-in, it must name an exact stable Vexcalibur release. |
+| `package_spec` | string | `vexcalibur==0.3.0` | Package requirement passed as one operand to `pip install`. Without the development opt-in, it must name an exact stable Vexcalibur release. |
 | `allow_development_package_spec` | boolean | `false` | Skips the exact-release check when `true`. The leading-option and credentialed-URL checks still apply. |
 | `constraints_file` | string | `""` | Readable absolute path to a pip constraints file. An empty value applies no constraints. |
 | `args` | string | `--help` | Vexcalibur arguments. Each nonempty line becomes one literal argument. |
@@ -109,7 +109,7 @@ Input validation failures exit with status `2` before package installation.
 | Missing package spec | `package_spec is required` |
 | Leading pip option | `package_spec must not start with a pip option` |
 | Credential-bearing URL at the start of the spec | `package_spec must not contain embedded credentials` |
-| Non-release spec without the development opt-in | `package_spec must be an exact Vexcalibur release such as vexcalibur==0.2.0` followed by opt-in guidance |
+| Non-release spec without the development opt-in | `package_spec must be an exact Vexcalibur release such as vexcalibur==0.3.0` followed by opt-in guidance |
 | Relative constraints path | `constraints_file must be an absolute path: PATH` |
 | Missing, non-file, or unreadable constraints path | `constraints_file does not exist or is not readable: PATH` |
 | Missing or non-executable Python | `VEXCALIBUR_ORB_PYTHON is not executable: VALUE` |
@@ -124,7 +124,7 @@ If installation fails, the command returns pip's nonzero status. If Vexcalibur r
 | --- | --- | --- | --- |
 | `python_version` | string | `3.14` | Image tag passed to the `python` executor. |
 | `checkout` | boolean | `true` | Runs the CircleCI `checkout` step before Vexcalibur when `true`. |
-| `package_spec` | string | `vexcalibur==0.2.0` | Passed to the command unchanged. |
+| `package_spec` | string | `vexcalibur==0.3.0` | Passed to the command unchanged. |
 | `allow_development_package_spec` | boolean | `false` | Passed to the command unchanged. |
 | `constraints_file` | string | `""` | Passed to the command unchanged. |
 | `args` | string | `--help` | Passed to the command unchanged. |
@@ -149,6 +149,7 @@ The orb source contains examples that CircleCI can display with a registry relea
 | --- | --- | --- |
 | `generate_vex_from_sbom` | [`src/examples/generate_vex_from_sbom.yml`](../../src/examples/generate_vex_from_sbom.yml) | Requires the caller to provide the shown local SBOM and findings paths. It writes deterministic CycloneDX VEX, stores it as a CircleCI artifact, and doesn't query OSV. |
 | `generate_openvex` | [`src/examples/generate_openvex.yml`](../../src/examples/generate_openvex.yml) | Requires the caller to provide the shown local SBOM and findings paths. It writes OpenVEX 0.2.0 JSON to `artifacts/openvex.json`, stores it as a CircleCI artifact, and doesn't query OSV. |
+| `generate_csaf` | [`src/examples/generate_csaf.yml`](../../src/examples/generate_csaf.yml) | Requires the caller to provide the shown local SBOM and findings paths. It writes CSAF 2.0 VEX JSON to the filename derived from its tracking ID, stores the file as a CircleCI artifact, and doesn't query OSV. |
 | `query_public_osv` | [`src/examples/query_public_osv.yml`](../../src/examples/query_public_osv.yml) | Queries public OSV for two intentionally public package URLs. It sends those URLs and versions to `https://api.osv.dev`. |
 
 All examples reference the intended `0.1.0` orb release and won't resolve before publication.
@@ -172,6 +173,26 @@ The OpenVEX example requires an author and at least one local finding. This mini
 ```
 
 The SBOM must contain a component whose `bom-ref` is `component:example-library`. That component also needs a versioned package URL. Other OpenVEX states require the evidence fields documented in the [Vexcalibur local findings reference](https://vexcalibur-dev.github.io/vexcalibur/reference/local-findings.html).
+
+### CSAF example contract
+
+The CSAF example reads local inputs and passes `--offline`. It supplies the document and publisher metadata required by Vexcalibur 0.3.0:
+
+| Option | Example value | Contract |
+| --- | --- | --- |
+| `--csaf-version` | `2.0` | Vexcalibur 0.3.0 accepts only CSAF 2.0. |
+| `--csaf-document-id` | `EXAMPLE-CSAF-VEX-2026-001` | Publisher-controlled tracking ID. |
+| `--csaf-document-title` | `Example component exploitability assessment` | Human-readable document title. |
+| `--csaf-publisher-name` | `Example Product Security` | Name of the organization responsible for the document. |
+| `--csaf-publisher-namespace` | `https://security.example.com` | Absolute URL controlled by the publisher. |
+| `--csaf-publisher-category` | `vendor` | One of `coordinator`, `discoverer`, `other`, `user`, or `vendor`. |
+| `--csaf-document-status` | `final` | One of `draft`, `final`, or `interim`; the CLI default is `draft`. |
+
+Direct CSAF file output must use the filename derived from the tracking ID. The example ID becomes `example-csaf-vex-2026-001.json`, so the example writes `artifacts/example-csaf-vex-2026-001.json`.
+
+The sample `in_triage` finding needs no extra state evidence. Other states may require an action, impact, remediation category, or fixed version. The [CSAF output reference](https://vexcalibur-dev.github.io/vexcalibur/reference/csaf-output.html) defines those mappings and the filename algorithm.
+
+This integration generates CSAF. It does not read CSAF, convert existing VEX documents, sign output, or publish a trusted-provider feed.
 
 ## Public OSV boundary
 

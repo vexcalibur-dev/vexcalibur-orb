@@ -66,6 +66,33 @@ jobs:
             2099-01-01T00:00:00Z
             --output
             artifacts/acceptance/openvex.json
+      - vexcalibur/run_vexcalibur:
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            csaf
+            --csaf-version
+            2.0
+            --csaf-document-id
+            VEXCALIBUR-ORB-ACCEPTANCE
+            --csaf-document-title
+            Vexcalibur orb acceptance test
+            --csaf-publisher-name
+            Vexcalibur Product Security
+            --csaf-publisher-namespace
+            https://github.com/vexcalibur-dev
+            --csaf-publisher-category
+            vendor
+            --csaf-document-status
+            final
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/acceptance/vexcalibur-orb-acceptance.json
       - run:
           name: Validate generated formats
           command: |
@@ -76,6 +103,9 @@ jobs:
             artifact_dir = Path("artifacts/acceptance")
             cyclonedx = json.loads((artifact_dir / "cyclonedx.json").read_text())
             openvex = json.loads((artifact_dir / "openvex.json").read_text())
+            csaf = json.loads(
+                (artifact_dir / "vexcalibur-orb-acceptance.json").read_text()
+            )
 
             assert cyclonedx["bomFormat"] == "CycloneDX"
             assert cyclonedx["specVersion"] == "1.6"
@@ -92,6 +122,47 @@ jobs:
             assert [product["@id"] for product in statement["products"]] == [
                 "pkg:pypi/example-library@1.2.3"
             ]
+
+            assert "$schema" not in csaf
+            csaf_document = csaf["document"]
+            assert csaf_document["category"] == "csaf_vex"
+            assert csaf_document["csaf_version"] == "2.0"
+            assert csaf_document["publisher"] == {
+                "category": "vendor",
+                "name": "Vexcalibur Product Security",
+                "namespace": "https://github.com/vexcalibur-dev",
+            }
+            assert csaf_document["title"] == "Vexcalibur orb acceptance test"
+            tracking = csaf_document["tracking"]
+            assert tracking["id"] == "VEXCALIBUR-ORB-ACCEPTANCE"
+            assert tracking["status"] == "final"
+            assert tracking["version"] == "1"
+            assert tracking["initial_release_date"] == "2099-01-01T00:00:00Z"
+            assert tracking["current_release_date"] == "2099-01-01T00:00:00Z"
+            assert tracking["revision_history"] == [
+                {
+                    "date": "2099-01-01T00:00:00Z",
+                    "number": "1",
+                    "summary": "Initial version.",
+                }
+            ]
+            assert tracking["generator"] == {
+                "date": "2099-01-01T00:00:00Z",
+                "engine": {"name": "Vexcalibur", "version": "0.3.0"},
+            }
+            products = csaf["product_tree"]["full_product_names"]
+            assert len(products) == 1
+            assert products[0]["product_identification_helper"]["purl"] == (
+                "pkg:pypi/example-library@1.2.3"
+            )
+            vulnerability = csaf["vulnerabilities"][0]
+            assert vulnerability["cve"] == "CVE-2099-0001"
+            assert vulnerability["product_status"] == {
+                "under_investigation": [products[0]["product_id"]]
+            }
+            assert "Original Vexcalibur analysis state: in_triage" in (
+                vulnerability["notes"][0]["text"]
+            )
             PY
       - store_artifacts:
           path: artifacts/acceptance

@@ -60,4 +60,6 @@ CircleCI controls the job's effective permissions, context access, artifact visi
 
 The runner deletes its temporary installation, but it doesn't delete files Vexcalibur writes to the CircleCI working directory. A custom job can store those files as artifacts or persist them to a workspace for a later job.
 
-The reusable `run` job has no built-in artifact step. If it writes only to `/tmp`, the result disappears with the container. The bundled [CycloneDX](../../src/examples/generate_vex_from_sbom.yml) and [OpenVEX](../../src/examples/generate_openvex.yml) examples use custom jobs to preserve their generated documents.
+The reusable `run` job has no built-in artifact step. If it writes only to `/tmp`, the result disappears with the container. The bundled [CycloneDX](../../src/examples/generate_vex_from_sbom.yml), [OpenVEX](../../src/examples/generate_openvex.yml), and [CSAF](../../src/examples/generate_csaf.yml) examples use custom jobs to preserve their generated documents.
+
+When `--output` names a CSAF file, its basename comes from the document tracking ID. The CSAF example writes that exact name into the working directory before `store_artifacts` preserves it. Artifact storage does not sign or publish the document; CircleCI only retains the local file under the project's artifact policy.
