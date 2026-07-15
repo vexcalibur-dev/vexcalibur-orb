@@ -1,4 +1,4 @@
-description: Generate CycloneDX VEX from a repository SBOM and local findings after the first registry release.
+description: Generate deterministic CycloneDX VEX and store it as an artifact. The caller must provide the SBOM and findings paths shown.
 
 usage:
   version: 2.1
@@ -6,10 +6,15 @@ usage:
   orbs:
     vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
 
-  workflows:
+  jobs:
     generate-vex:
-      jobs:
-        - vexcalibur/run:
+      executor: vexcalibur/python
+      steps:
+        - checkout
+        - run:
+            name: Prepare artifact directory
+            command: mkdir -p artifacts
+        - vexcalibur/run_vexcalibur:
             args: |
               generate
               sbom/cyclonedx.xml
@@ -19,4 +24,11 @@ usage:
               --timestamp
               2026-06-23T00:00:00Z
               --output
-              /tmp/cyclonedx-vex.json
+              artifacts/cyclonedx-vex.json
+        - store_artifacts:
+            path: artifacts/cyclonedx-vex.json
+
+  workflows:
+    generate-vex:
+      jobs:
+        - generate-vex
