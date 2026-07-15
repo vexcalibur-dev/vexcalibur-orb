@@ -80,7 +80,21 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-Both commands should exit with status `0`. The validation script packs the source and validates the orb and setup configuration. It then injects the packed orb into `.circleci/test-deploy.yml` and validates that continuation configuration. Generated files stay in a temporary directory.
+Both commands should exit with status `0`. The validation script packs the source, injects it into `.circleci/test-deploy.yml`, processes both CircleCI configurations, and checks the sensitive jobs' executor and step order. It validates every generated configuration. Generated files stay in a temporary directory.
+
+The publication handoff separates artifact creation from credential use:
+
+```mermaid
+flowchart LR
+    pack[Credentialless pack job] --> hash[Record orb.yml SHA-256]
+    hash --> workspace[Persist orb.yml and checksum]
+    workspace --> verify[Verify checksum in pinned publish executor]
+    verify --> publish[Publish with restricted CIRCLE_TOKEN]
+```
+
+The pack job runs without the `orb-publishing` context. It stores the checksum as a CircleCI artifact and persists `orb.yml` with its one-entry checksum manifest. The publish job uses the same CircleCI CLI image pinned by tag and registry digest, attaches those two files, and verifies the digest before the orb-tools publication step. A checksum mismatch stops the job before publication. The workflow disables orb-tools' optional pull-request comment, so the publishing context does not need a GitHub token.
+
+The checksum detects an artifact that changed between the two stages. Because the orb and checksum travel through the same CircleCI workspace, it does not independently authenticate CircleCI's storage. The project restriction, release-maintainer security group, immutable executor image, and CircleCI workspace controls remain part of the release trust boundary.
 
 ## Publish and test a development version
 
@@ -92,6 +106,8 @@ Before approval, confirm all four prerequisites for `approve-dev-publish` succee
 - `command-help-test`
 - `format-output-test`
 - `job-help-test`
+
+Open the `pack-dev` artifacts and confirm `packed-orb/orb.yml.sha256` contains one SHA-256 entry for `orb.yml`. The `publish-dev` job verifies that entry automatically; approval does not bypass the verification step.
 
 Approve `approve-dev-publish`. The following `publish-dev` job uses the restricted context to publish two development aliases: `dev:<commit-sha>` and `dev:alpha`. Development versions expire after 90 days; `dev:alpha` can move, so verify the commit-specific alias.
 
@@ -145,7 +161,7 @@ Use a full three-part semantic version. The first intended release is `v0.1.0`; 
    - `job-help-test`
    - `publish-release`
 
-   `release-source-check` stops publication unless the tag commit is reachable from `origin/main`.
+   `release-source-check` stops publication unless the tag commit is reachable from `origin/main`. `pack-release` records the packed source checksum without the publishing context, and `publish-release` must log a successful checksum verification before the orb-tools publication step.
 
 6. Verify the immutable registry version:
 
@@ -181,6 +197,7 @@ If a publishing credential may have been exposed, revoke it before retrying anyt
 | --- | --- |
 | Setup workflow doesn't continue | Confirm the project is connected and dynamic config is enabled. Then inspect `orb-tools/continue`. |
 | `No Orb Publishing Token detected` | Confirm the `orb-publishing` context is attached, its variable is named `CIRCLE_TOKEN`, and the approving user can access the context. |
+| Packed orb SHA-256 does not match | Do not retry publication unchanged. Inspect the `pack-dev` or `pack-release` checksum artifact and workspace-producing job, then rerun from a trusted commit after finding the cause. |
 | Registry says the namespace or orb doesn't exist | Complete the one-time namespace and orb creation with the Vexcalibur CircleCI organization. |
 | `release-source-check` fails | Confirm the tag commit is reachable from `origin/main`. Don't weaken or bypass the check. |
 | Production publish says the version exists | Treat the registry version as immutable and publish a new patch version if a correction is needed. |

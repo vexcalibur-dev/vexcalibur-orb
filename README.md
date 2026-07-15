@@ -79,7 +79,7 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-The checks should exit with status `0`. The last command packs the orb and validates the packed orb, the setup configuration, and the continuation configuration.
+The checks should exit with status `0`. The last command packs the orb, resolves both CircleCI configurations, checks the publication executor pin and checksum-step order, and validates the packed and processed configurations.
 
 ## Documentation
 

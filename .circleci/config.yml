@@ -2,8 +2,13 @@ version: 2.1
 setup: true
 
 orbs:
-  orb-tools: circleci/orb-tools@12.3
-  shellcheck: circleci/shellcheck@3.2
+  orb-tools: circleci/orb-tools@12.3.3
+  shellcheck: circleci/shellcheck@3.2.0
+
+executors:
+  pinned-circleci-cli:
+    docker:
+      - image: circleci/circleci-cli:0.1.38646@sha256:2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926
 
 filters: &filters
   tags:
@@ -15,6 +20,7 @@ workflows:
       - orb-tools/lint:
           filters: *filters
       - orb-tools/pack:
+          executor: pinned-circleci-cli
           filters: *filters
       - orb-tools/review:
           orb_name: vexcalibur-dev/vexcalibur
@@ -22,6 +28,7 @@ workflows:
       - shellcheck/check:
           filters: *filters
       - orb-tools/continue:
+          executor: pinned-circleci-cli
           pipeline_number: << pipeline.number >>
           vcs_type: github
           orb_name: vexcalibur
