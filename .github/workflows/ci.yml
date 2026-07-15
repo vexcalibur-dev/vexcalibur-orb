@@ -13,6 +13,8 @@ permissions:
 env:
   CIRCLECI_CLI_TELEMETRY_OPTOUT: "true"
   CIRCLECI_CLI_VERSION: "0.1.38646"
+  # Public GitHub release-asset digest, not a credential.
+  CIRCLECI_CLI_CHECKSUMS_SHA256: "3e7359dfc2c3634e21c2f210588a114d24613bf39dbf8b216ed7b4cb3a9e401a" # pragma: allowlist secret
 
 jobs:
   quality:
@@ -65,13 +67,9 @@ jobs:
       - name: Install CircleCI CLI
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/circleci-cli"
-          export PATH="${RUNNER_TEMP}/circleci-cli:${PATH}"
-          curl -fLSs "https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/v${CIRCLECI_CLI_VERSION}/install.sh" \
-            -o "${RUNNER_TEMP}/install-circleci-cli.sh"
-          VERSION="${CIRCLECI_CLI_VERSION}" DESTDIR="${RUNNER_TEMP}/circleci-cli" \
-            bash "${RUNNER_TEMP}/install-circleci-cli.sh"
-          echo "${RUNNER_TEMP}/circleci-cli" >> "$GITHUB_PATH"
+          export CIRCLECI_CLI_INSTALL_DIR="${RUNNER_TEMP}/circleci-cli"
+          scripts/install-circleci-cli.sh
+          echo "${CIRCLECI_CLI_INSTALL_DIR}" >> "$GITHUB_PATH"
 
       - name: Validate CircleCI orb and configs
         run: scripts/validate-circleci.sh

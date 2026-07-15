@@ -14,6 +14,8 @@ PACKAGE_SPEC_FILES = [
     "src/jobs/run.yml",
     "src/scripts/run-vexcalibur.sh",
 ]
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+CIRCLECI_CLI_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 class RepositoryConsistencyTests(unittest.TestCase):
@@ -68,6 +70,28 @@ class RepositoryConsistencyTests(unittest.TestCase):
         ):
             with (REPO_ROOT / relative_path).open(encoding="utf-8") as stream:
                 self.assertIsInstance(json.load(stream), dict)
+
+    def test_ci_uses_verified_circleci_cli_archive_installer(self) -> None:
+        workflow = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        installer = (REPO_ROOT / "scripts/install-circleci-cli.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("raw.githubusercontent.com/CircleCI-Public/circleci-cli", workflow)
+        self.assertIn("scripts/install-circleci-cli.sh", workflow)
+        self.assertIn("scripts/validate-circleci.sh", workflow)
+        self.assertIn(
+            "https://github.com/CircleCI-Public/circleci-cli/releases/download",
+            installer,
+        )
+        self.assertNotIn("install.sh", installer)
+
+        version_match = re.search(r'CIRCLECI_CLI_VERSION: "([0-9.]+)"', workflow)
+        checksum_match = re.search(r'CIRCLECI_CLI_CHECKSUMS_SHA256: "([0-9a-f]+)"', workflow)
+        if version_match is None or checksum_match is None:
+            self.fail("CircleCI CLI version and checksum pins must both be present")
+        self.assertTrue(CIRCLECI_CLI_VERSION_PATTERN.fullmatch(version_match.group(1)))
+        self.assertTrue(SHA256_PATTERN.fullmatch(checksum_match.group(1)))
 
 
 if __name__ == "__main__":
