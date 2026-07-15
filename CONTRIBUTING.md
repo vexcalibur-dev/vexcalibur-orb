@@ -44,7 +44,7 @@ The orb development kit packs the public interface from `src/`:
 | `scripts/install-circleci-cli.sh` | Fail-closed CircleCI CLI download and verification used by GitHub CI |
 | `docs/reference/orb.md` | Public interface and runtime reference |
 
-Tests under `tests/` exercise the runner and guard repeated defaults against drift. `.circleci/config.yml` validates and packs the source. It then passes control to `.circleci/test-deploy.yml`, which tests the packed source and controls publication.
+Tests under `tests/` exercise the runner and guard repeated defaults against drift. `.circleci/config.yml` validates and packs the source. It then passes control to `.circleci/test-deploy.yml`, which tests the packed source and controls publication. Both configurations pin production orb imports to full semantic versions. The pack, continuation, and publish jobs also pin the CircleCI CLI container by version and image digest.
 
 ## Make a change
 
@@ -72,13 +72,15 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-Every command should exit with status `0`. `scripts/validate-circleci.sh` packs `src/` into a temporary directory and validates the packed orb and setup config. It then injects the orb into the continuation config and validates the result. It doesn't publish anything.
+Every command should exit with status `0`. `scripts/validate-circleci.sh` packs `src/` into a temporary directory and validates the packed orb and setup config. It then injects the orb into the continuation config, processes both configurations, confirms the sensitive jobs use the expected immutable executor, and confirms checksum verification precedes publication. It doesn't publish anything.
 
 GitHub CI also parses every checked-in YAML and JSON file. Run the full workflow in a pull request before merging.
 
-## Update the CircleCI CLI used by GitHub CI
+## Update the CircleCI CLI pins
 
 GitHub CI downloads a pinned CircleCI CLI release archive. It verifies the checksum manifest against a pinned SHA-256 digest, verifies the platform archive against that manifest, and checks the extracted binary's reported version before installing it. The workflow never executes CircleCI's remote installer script.
+
+CircleCI publication uses the matching `circleci/circleci-cli` container. The tag is paired with its registry digest in `.circleci/config.yml` and `.circleci/test-deploy.yml`; the tag alone is not accepted. You need Docker with Buildx only when inspecting or updating this image pin.
 
 You need GitHub CLI access to the public [`CircleCI-Public/circleci-cli`](https://github.com/CircleCI-Public/circleci-cli) repository for the release inspection commands below. You don't need a CircleCI token.
 
@@ -96,7 +98,26 @@ You need GitHub CLI access to the public [`CircleCI-Public/circleci-cli`](https:
 
 2. Copy the digest for `circleci-cli_${VERSION}_checksums.txt`, without its `sha256:` prefix. Update `CIRCLECI_CLI_VERSION` and `CIRCLECI_CLI_CHECKSUMS_SHA256` together in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-3. Run the installer tests and the repository validation suite:
+3. Resolve, inspect, and validate the container manifest for the same version. Run this block in Bash from any directory:
+
+   ```bash
+   IMAGE="circleci/circleci-cli:${VERSION}"
+   docker buildx imagetools inspect "$IMAGE"
+   IMAGE_DIGEST="$(
+     docker buildx imagetools inspect "$IMAGE" |
+       awk '$1 == "Digest:" {print $2; exit}'
+   )"
+   [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+   docker pull "${IMAGE}@${IMAGE_DIGEST}"
+   docker run --rm "${IMAGE}@${IMAGE_DIGEST}" circleci version
+   printf 'Pinned image: %s@%s\n' "$IMAGE" "$IMAGE_DIGEST"
+   ```
+
+   The command must report the chosen CircleCI CLI version. Copy the final `sha256:` digest only after that check passes. Update the complete tag-and-digest image reference under `pinned-circleci-cli` in `.circleci/config.yml` and `.circleci/test-deploy.yml`. Confirm both files use the same value.
+
+4. Pin any updated CircleCI orbs to a full `MAJOR.MINOR.PATCH` version. Partial versions such as `orb-tools@12.3` and floating tags such as `latest` fail the repository tests.
+
+5. Run the installer tests and the repository validation suite:
 
    ```bash
    python -m unittest tests.test_install_circleci_cli
@@ -106,9 +127,9 @@ You need GitHub CLI access to the public [`CircleCI-Public/circleci-cli`](https:
    scripts/validate-circleci.sh
    ```
 
-   The installer tests use local fixtures. The full GitHub workflow performs the real release download and must pass before the version update merges.
+   The installer tests use local fixtures. Configuration validation resolves the public orbs and inspects the processed sensitive jobs. The full GitHub workflow performs the real release download and must pass before the version update merges.
 
-If manifest verification, archive verification, platform selection, archive layout, or the reported CLI version differs from the pins, installation stops without putting a binary on `PATH`. Investigate the upstream release instead of weakening a check.
+If manifest verification, archive verification, image inspection, platform selection, archive layout, or the reported CLI version differs from the pins, stop the update. Investigate the upstream release instead of weakening a check.
 
 ## Open a pull request
 

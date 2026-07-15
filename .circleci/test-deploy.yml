@@ -1,8 +1,89 @@
 version: 2.1
 
 orbs:
-  orb-tools: circleci/orb-tools@12.3
+  orb-tools: circleci/orb-tools@12.3.3
   vexcalibur: {}
+
+executors:
+  pinned-circleci-cli:
+    docker:
+      - image: circleci/circleci-cli:0.1.38646@sha256:2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926
+
+commands:
+  record-packed-orb:
+    steps:
+      - run:
+          name: Record packed orb SHA-256
+          command: |
+            set -euo pipefail
+            orb_path=dist/orb.yml
+            checksum_path=dist/orb.yml.sha256
+
+            if [[ ! -f "$orb_path" || -L "$orb_path" ]]; then
+              printf 'Packed orb must be a regular, non-symlink file: %s\n' "$orb_path" >&2
+              exit 1
+            fi
+
+            read -r digest _ < <(sha256sum -- "$orb_path")
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              printf 'sha256sum returned an invalid digest for %s\n' "$orb_path" >&2
+              exit 1
+            fi
+
+            temporary_checksum="${checksum_path}.tmp.$$"
+            cleanup() {
+              rm -f -- "$temporary_checksum"
+            }
+            trap cleanup EXIT
+            printf '%s  orb.yml\n' "$digest" > "$temporary_checksum"
+            mv -f -- "$temporary_checksum" "$checksum_path"
+            trap - EXIT
+
+            printf 'Recorded SHA-256 for %s: %s\n' "$orb_path" "$digest"
+
+  verify-packed-orb:
+    steps:
+      - run:
+          name: Verify packed orb SHA-256
+          command: |
+            set -euo pipefail
+            orb_path=dist/orb.yml
+            checksum_path=dist/orb.yml.sha256
+
+            if [[ ! -f "$orb_path" || -L "$orb_path" ]]; then
+              printf 'Packed orb must be a regular, non-symlink file: %s\n' "$orb_path" >&2
+              exit 1
+            fi
+            if [[ ! -f "$checksum_path" || -L "$checksum_path" ]]; then
+              printf 'Checksum must be a regular, non-symlink file: %s\n' "$checksum_path" >&2
+              exit 1
+            fi
+
+            mapfile -t checksum_lines < "$checksum_path"
+            if (( ${#checksum_lines[@]} != 1 )); then
+              printf 'Checksum manifest must contain exactly one line: %s\n' "$checksum_path" >&2
+              exit 1
+            fi
+
+            checksum_line="${checksum_lines[0]}"
+            expected_digest="${checksum_line:0:64}"
+            separator="${checksum_line:64:2}"
+            recorded_name="${checksum_line:66}"
+            if [[ ! "$expected_digest" =~ ^[0-9a-f]{64}$ \
+              || "$separator" != "  " \
+              || "$recorded_name" != "orb.yml" ]]; then
+              printf 'Checksum manifest has an invalid entry for orb.yml\n' >&2
+              exit 1
+            fi
+
+            read -r actual_digest _ < <(sha256sum -- "$orb_path")
+            if [[ "$actual_digest" != "$expected_digest" ]]; then
+              printf 'Packed orb SHA-256 does not match the credentialless pack result\n' >&2
+              printf 'Expected: %s\nActual:   %s\n' "$expected_digest" "$actual_digest" >&2
+              exit 1
+            fi
+
+            printf 'Verified SHA-256 for %s: %s\n' "$orb_path" "$actual_digest"
 
 filters: &filters
   tags:
@@ -193,6 +274,18 @@ workflows:
           filters: *filters
       - orb-tools/pack:
           name: pack-dev
+          executor: pinned-circleci-cli
+          persist_to_workspace: false
+          post-steps:
+            - record-packed-orb
+            - store_artifacts:
+                path: dist/orb.yml.sha256
+                destination: packed-orb/orb.yml.sha256
+            - persist_to_workspace:
+                root: dist
+                paths:
+                  - orb.yml
+                  - orb.yml.sha256
           filters: *dev-publish-filters
       - approve-dev-publish:
           type: approval
@@ -204,24 +297,50 @@ workflows:
           filters: *dev-publish-filters
       - orb-tools/publish:
           name: publish-dev
+          executor: pinned-circleci-cli
+          attach_workspace: false
           orb_name: vexcalibur-dev/vexcalibur
           vcs_type: github
           pub_type: dev
+          enable_pr_comment: false
           context: orb-publishing
+          pre-steps:
+            - attach_workspace:
+                at: dist
+            - verify-packed-orb
           requires:
             - approve-dev-publish
           filters: *dev-publish-filters
       - orb-tools/pack:
           name: pack-release
+          executor: pinned-circleci-cli
+          persist_to_workspace: false
+          post-steps:
+            - record-packed-orb
+            - store_artifacts:
+                path: dist/orb.yml.sha256
+                destination: packed-orb/orb.yml.sha256
+            - persist_to_workspace:
+                root: dist
+                paths:
+                  - orb.yml
+                  - orb.yml.sha256
           filters: *release-filters
       - release-source-check:
           filters: *release-filters
       - orb-tools/publish:
           name: publish-release
+          executor: pinned-circleci-cli
+          attach_workspace: false
           orb_name: vexcalibur-dev/vexcalibur
           vcs_type: github
           pub_type: production
+          enable_pr_comment: false
           context: orb-publishing
+          pre-steps:
+            - attach_workspace:
+                at: dist
+            - verify-packed-orb
           requires:
             - pack-release
             - command-help-test
