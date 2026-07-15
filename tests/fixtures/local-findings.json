@@ -1,0 +1,13 @@
+{
+  "findings": [
+    {
+      "id": "CVE-2099-0001",
+      "component_ref": "component:example-library",
+      "source_name": "Orb acceptance test",
+      "source_url": "https://security.example.test/vulnerabilities/CVE-2099-0001",
+      "modified": "2099-01-01T00:00:00Z",
+      "analysis_state": "in_triage",
+      "analysis_detail": "The product security team is reviewing impact."
+    }
+  ]
+}

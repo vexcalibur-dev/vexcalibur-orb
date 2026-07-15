@@ -1,0 +1,40 @@
+description: Generate OpenVEX from a local SBOM and findings file, then store it as an artifact.
+
+usage:
+  version: 2.1
+
+  orbs:
+    vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
+
+  jobs:
+    generate-openvex:
+      executor: vexcalibur/python
+      steps:
+        - checkout
+        - run:
+            name: Prepare artifact directory
+            command: mkdir -p artifacts
+        - vexcalibur/run_vexcalibur:
+            args: |
+              generate
+              sbom/cyclonedx.json
+              --offline
+              --findings-file
+              security/openvex-findings.json
+              --format
+              openvex
+              --author
+              Example product security team
+              --author-role
+              VEX document producer
+              --timestamp
+              2099-01-01T00:00:00Z
+              --output
+              artifacts/openvex.json
+        - store_artifacts:
+            path: artifacts/openvex.json
+
+  workflows:
+    generate-openvex:
+      jobs:
+        - generate-openvex

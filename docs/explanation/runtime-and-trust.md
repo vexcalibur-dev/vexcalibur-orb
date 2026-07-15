@@ -60,4 +60,4 @@ CircleCI controls the job's effective permissions, context access, artifact visi
 
 The runner deletes its temporary installation, but it doesn't delete files Vexcalibur writes to the CircleCI working directory. A custom job can store those files as artifacts or persist them to a workspace for a later job.
 
-The reusable `run` job has no built-in artifact step. If it writes only to `/tmp`, the result disappears with the container. The bundled [SBOM example](../../src/examples/generate_vex_from_sbom.yml) uses the command in a custom job so the generated document is preserved deliberately.
+The reusable `run` job has no built-in artifact step. If it writes only to `/tmp`, the result disappears with the container. The bundled [CycloneDX](../../src/examples/generate_vex_from_sbom.yml) and [OpenVEX](../../src/examples/generate_openvex.yml) examples use custom jobs to preserve their generated documents.

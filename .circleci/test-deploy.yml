@@ -28,6 +28,74 @@ jobs:
       - vexcalibur/run_vexcalibur:
           args: --help
 
+  format-output-test:
+    docker:
+      - image: cimg/python:3.14.1
+    steps:
+      - checkout
+      - run:
+          name: Prepare artifact directory
+          command: mkdir -p artifacts/acceptance
+      - vexcalibur/run_vexcalibur:
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            cyclonedx
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/acceptance/cyclonedx.json
+      - vexcalibur/run_vexcalibur:
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            openvex
+            --author
+            Vexcalibur orb acceptance test
+            --author-role
+            VEX document producer
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/acceptance/openvex.json
+      - run:
+          name: Validate generated formats
+          command: |
+            python - \<<'PY'
+            import json
+            from pathlib import Path
+
+            artifact_dir = Path("artifacts/acceptance")
+            cyclonedx = json.loads((artifact_dir / "cyclonedx.json").read_text())
+            openvex = json.loads((artifact_dir / "openvex.json").read_text())
+
+            assert cyclonedx["bomFormat"] == "CycloneDX"
+            assert cyclonedx["specVersion"] == "1.6"
+            assert [item["id"] for item in cyclonedx["vulnerabilities"]] == [
+                "CVE-2099-0001"
+            ]
+
+            assert openvex["@context"] == "https://openvex.dev/ns/v0.2.0"
+            assert openvex["author"] == "Vexcalibur orb acceptance test"
+            assert len(openvex["statements"]) == 1
+            statement = openvex["statements"][0]
+            assert statement["status"] == "under_investigation"
+            assert statement["vulnerability"]["name"] == "CVE-2099-0001"
+            assert [product["@id"] for product in statement["products"]] == [
+                "pkg:pypi/example-library@1.2.3"
+            ]
+            PY
+      - store_artifacts:
+          path: artifacts/acceptance
+
   release-source-check:
     docker:
       - image: cimg/base:2026.01
@@ -45,6 +113,8 @@ workflows:
     jobs:
       - command-help-test:
           filters: *filters
+      - format-output-test:
+          filters: *filters
       - vexcalibur/run:
           name: job-help-test
           checkout: false
@@ -58,6 +128,7 @@ workflows:
           requires:
             - pack-dev
             - command-help-test
+            - format-output-test
             - job-help-test
           filters: *dev-publish-filters
       - orb-tools/publish:
@@ -83,6 +154,7 @@ workflows:
           requires:
             - pack-release
             - command-help-test
+            - format-output-test
             - job-help-test
             - release-source-check
           filters: *release-filters
