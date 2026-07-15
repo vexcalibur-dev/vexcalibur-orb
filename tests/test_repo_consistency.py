@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ PACKAGE_SPEC_FILES = [
     "docs/reference/orb.md",
     "src/commands/run_vexcalibur.yml",
     "src/jobs/run.yml",
+    "src/scripts/run-vexcalibur.sh",
 ]
 
 
@@ -23,7 +25,20 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
         all_specs = set().union(*specs_by_path.values())
 
-        self.assertEqual(all_specs, {"vexcalibur==0.1.1"}, specs_by_path)
+        self.assertEqual(all_specs, {"vexcalibur==0.2.0"}, specs_by_path)
+
+    def test_acceptance_fixtures_are_local_and_valid_json(self) -> None:
+        config = (REPO_ROOT / ".circleci/test-deploy.yml").read_text(encoding="utf-8")
+        self.assertNotIn("--allow-public-osv", config)
+        self.assertIn("--format\n            cyclonedx", config)
+        self.assertIn("--format\n            openvex", config)
+
+        for relative_path in (
+            "tests/fixtures/cyclonedx-sbom.json",
+            "tests/fixtures/local-findings.json",
+        ):
+            with (REPO_ROOT / relative_path).open(encoding="utf-8") as stream:
+                self.assertIsInstance(json.load(stream), dict)
 
 
 if __name__ == "__main__":

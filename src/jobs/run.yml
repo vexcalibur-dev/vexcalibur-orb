@@ -15,7 +15,7 @@ parameters:
     description: Check out the project before running Vexcalibur.
   package_spec:
     type: string
-    default: vexcalibur==0.1.1
+    default: vexcalibur==0.2.0
     description: Package requirement passed to the run_vexcalibur command.
   allow_development_package_spec:
     type: boolean

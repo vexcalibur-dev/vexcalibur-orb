@@ -86,10 +86,11 @@ Both commands should exit with status `0`. The validation script packs the sourc
 
 Push the release candidate to `main`. CircleCI should run the setup workflow, then continue into `test-deploy` with the packed local orb inserted under the `vexcalibur` name.
 
-Before approval, confirm all three prerequisites for `approve-dev-publish` succeeded:
+Before approval, confirm all four prerequisites for `approve-dev-publish` succeeded:
 
 - `pack-dev`
 - `command-help-test`
+- `format-output-test`
 - `job-help-test`
 
 Approve `approve-dev-publish`. The following `publish-dev` job uses the restricted context to publish two development aliases: `dev:<commit-sha>` and `dev:alpha`. Development versions expire after 90 days; `dev:alpha` can move, so verify the commit-specific alias.
@@ -103,7 +104,7 @@ circleci orb info "vexcalibur-dev/vexcalibur@${DEV_VERSION}"
 
 The command should show metadata for the Vexcalibur orb at that exact development version. Confirm the production `publish-release` job did not run on the branch pipeline.
 
-The continuation tests exercise the packed command and job with `--help`. They don't yet generate a fixture-backed VEX document; [issue #3](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/3) tracks that acceptance coverage.
+The continuation tests exercise the packed command and job with `--help`. They also generate and validate CycloneDX and OpenVEX JSON from checked-in local fixtures. The format test uses `--offline` and never queries public OSV.
 
 ## Publish a production version
 
@@ -129,6 +130,7 @@ Use a full three-part semantic version. The first intended release is `v0.1.0`; 
    - `pack-release`
    - `release-source-check`
    - `command-help-test`
+   - `format-output-test`
    - `job-help-test`
    - `publish-release`
 

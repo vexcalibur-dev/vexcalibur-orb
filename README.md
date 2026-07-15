@@ -20,7 +20,7 @@ The source currently has these defaults:
 
 | Surface | Default |
 | --- | --- |
-| Vexcalibur package | `vexcalibur==0.1.1` |
+| Vexcalibur package | `vexcalibur==0.2.0` |
 | Python image | `cimg/python:3.14` |
 | Repository checkout in the reusable job | Enabled |
 | Public OSV access | Disabled unless the caller passes `--allow-public-osv` |
@@ -47,14 +47,17 @@ workflows:
 
 The job succeeds when Vexcalibur installs and exits with status `0`.
 
-The orb also includes two workflow templates:
+The orb also includes three workflow templates:
 
 - [Generate and preserve CycloneDX VEX from an SBOM](src/examples/generate_vex_from_sbom.yml)
+- [Generate and preserve OpenVEX from local findings](src/examples/generate_openvex.yml)
 - [Query public OSV with an approved package inventory](src/examples/query_public_osv.yml)
 
 Every nonempty line in `args` becomes one command-line argument. Write flags and their values on separate lines. The orb does not split a line on spaces or evaluate it as shell code.
 
 Vexcalibur refuses to send package URLs, versions, or SBOM inventory to public OSV unless the command includes `--allow-public-osv`. Use that flag only when the workflow is allowed to share those values with `https://api.osv.dev`.
+
+The OpenVEX example stays offline. It reads a checked-out SBOM and a local findings file, then stores `artifacts/openvex.json`. The findings file must produce at least one valid statement.
 
 ## Develop the orb
 
