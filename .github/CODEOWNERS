@@ -1,0 +1,15 @@
+# Danny Sauer is the primary maintainer for the Vexcalibur CircleCI Orb.
+* @dannysauer
+
+# These paths control CI, publication, and the consumer runtime boundary.
+/.github/CODEOWNERS @dannysauer
+/.github/workflows/ @dannysauer
+/.circleci/ @dannysauer
+/scripts/ @dannysauer
+/src/@orb.yml @dannysauer
+/src/commands/ @dannysauer
+/src/executors/ @dannysauer
+/src/jobs/ @dannysauer
+/src/scripts/ @dannysauer
+/requirements-dev.txt @dannysauer
+/tests/test_packed_orb_integrity.py @dannysauer
