@@ -1,10 +1,10 @@
-description: Python Docker executor for Vexcalibur.
+description: Run Vexcalibur in a CircleCI Python convenience image.
 
 parameters:
   tag:
     type: string
     default: "3.14"
-    description: Tag for the cimg/python Docker image.
+    description: Tag appended to cimg/python to select the Docker image.
 
 docker:
   - image: cimg/python:<< parameters.tag >>

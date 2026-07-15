@@ -1,27 +1,40 @@
-# Security Policy
+# Security policy
 
-## Reporting Vulnerabilities
+## Report a vulnerability
 
-Vexcalibur CircleCI Orb follows the shared `vexcalibur-dev` security policy:
+GitHub private vulnerability reporting is not enabled for this repository. Use the [private disclosure channel request](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/new?template=private_disclosure_request.yml) to ask maintainers for a private way to report the problem.
 
-<https://github.com/vexcalibur-dev/.github/security/policy>
+This project also follows the [shared `vexcalibur-dev` security policy](https://github.com/vexcalibur-dev/.github/security/policy).
 
-Use GitHub private vulnerability reporting for Vexcalibur CircleCI Orb
-vulnerabilities:
+That request is a public issue. Include only a request for a private channel. Don't include the affected package or workflow, exploit details, reproduction steps, credentials, private package data, sensitive SBOM contents, logs, stack traces, or screenshots.
 
-<https://github.com/vexcalibur-dev/vexcalibur-orb/security/advisories/new>
+After a maintainer provides a private channel, send the affected source or workflow, impact, reproduction steps, and any suggested mitigation there. The shared policy defines response and update targets for active reports.
 
-Do not open public issues with vulnerabilities, exploit details, secrets,
-tokens, private package data, affected package names, logs, stack traces,
-screenshots, reproduction steps, or other sensitive evidence.
+## Supported versions
 
-Do not put tokens, passwords, or private package credentials in orb
-`package_spec`, `constraints_file`, or `args` values. The runner rejects common
-credentialed URL package specs, but workflow logs and package installer output
-can still expose sensitive values supplied by callers.
+The orb has not been published to the CircleCI registry. Security fixes currently target the default branch.
 
-## Supported Versions
+| Surface | Supported |
+| --- | --- |
+| Source on `main` | Yes |
+| CircleCI registry releases | None exist |
 
-The orb has not been published to the CircleCI registry yet. Security fixes
-target the default branch until versioned orb releases are published. After the
-first orb release, this policy must list supported release lines.
+This table will change when the first versioned orb is published.
+
+## Keep secrets out of orb parameters
+
+Don't put a token, password, or private package credential in `package_spec`, `constraints_file`, or `args`. Those values live in CircleCI configuration or files, and package installer or command output can expose them in job logs.
+
+The runner rejects a package spec that starts with a pip option or with an obvious credential-bearing URL. That check catches common mistakes; it is not a credential scanner. A development package spec and a constraints file can still carry sensitive data in forms the runner doesn't recognize.
+
+When Vexcalibur needs a GitHub token, store it in a restricted CircleCI context or project environment variable. Pass the environment variable's name to Vexcalibur when the CLI requires one; don't copy the token value into `args`. Grant the token only the permissions needed for the repository and operation.
+
+If a credential appears in configuration, source, an artifact, or a job log, revoke or rotate it at the issuing service immediately. Then follow your organization's incident process and remove the exposed value from future pipeline runs.
+
+## Review outbound data
+
+The command installs Vexcalibur from the package index available to pip. Vexcalibur can also contact GitHub, public OSV, or a private OSV-compatible service when its CLI arguments request that behavior.
+
+The orb never adds `--allow-public-osv`. Without that flag, Vexcalibur refuses to send package URLs, package versions, or SBOM-derived inventory to `https://api.osv.dev`. Approve that data sharing before adding the flag to a workflow.
+
+The [runtime and trust-boundary explanation](docs/explanation/runtime-and-trust.md) describes the installation and network boundaries in more detail.

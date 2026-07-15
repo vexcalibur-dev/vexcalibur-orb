@@ -1,4 +1,4 @@
-description: Query intentionally public package URLs with Vexcalibur after the first registry release.
+description: Query public OSV for package URLs approved for disclosure.
 
 usage:
   version: 2.1

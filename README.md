@@ -1,28 +1,35 @@
-# Vexcalibur CircleCI Orb
+# Vexcalibur CircleCI orb
 
-![Vexcalibur wordmark and sword logo](docs/assets/vexcalibur-banner.png)
+![Vexcalibur wordmark with a sword forming the letter V](docs/assets/vexcalibur-banner.png)
 
 [![CI](https://github.com/vexcalibur-dev/vexcalibur-orb/actions/workflows/ci.yml/badge.svg)](https://github.com/vexcalibur-dev/vexcalibur-orb/actions/workflows/ci.yml)
 
-CircleCI orb for running [Vexcalibur](https://github.com/vexcalibur-dev/vexcalibur)
-in SBOM and VEX workflows.
+The Vexcalibur orb runs [Vexcalibur](https://github.com/vexcalibur-dev/vexcalibur) in a CircleCI pipeline. It gives CircleCI users a reusable job, command, and Python executor for Vulnerability Exploitability eXchange (VEX) workflows.
 
-This repository is ready for orb source review and GitHub-side validation. The
-CircleCI registry publication path still needs a `vexcalibur-dev` CircleCI
-namespace, a project connected to this repository, and an `orb-publishing`
-context with a CircleCI token.
+The orb installs an exact Vexcalibur release into a temporary virtual environment for each invocation. It can run any Vexcalibur command. Common uses include generating a VEX document from a software bill of materials (SBOM) and querying an Open Source Vulnerabilities (OSV) service.
 
-## Usage After First Registry Release
+## Project status
 
-These examples work after the orb has been published as
-`vexcalibur-dev/vexcalibur@0.1.0` in the CircleCI registry.
+The orb has not been published to the CircleCI registry. The configuration examples in this repository preview the intended first release. `vexcalibur-dev/vexcalibur@0.1.0` cannot be resolved until that release exists.
 
-The default package spec is the current Vexcalibur release used by the GitHub
-Action compatibility table: `vexcalibur==0.1.1`.
+[Issue #1](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/1) tracks the remaining account and publishing setup.
 
-Supply-chain-sensitive workflows can pass `constraints_file` with an absolute
-path to a checked-in pip constraints file. The orb rejects credentialed package
-specs and pip option-looking package specs.
+The public release will be a community orb. A CircleCI organization administrator must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before that organization can import it.
+
+The source currently has these defaults:
+
+| Surface | Default |
+| --- | --- |
+| Vexcalibur package | `vexcalibur==0.1.1` |
+| Python image | `cimg/python:3.14` |
+| Repository checkout in the reusable job | Enabled |
+| Public OSV access | Disabled unless the caller passes `--allow-public-osv` |
+
+For a Vexcalibur integration that is available today, see the [Vexcalibur GitHub Action](https://github.com/vexcalibur-dev/vexcalibur-action).
+
+## Preview the orb interface
+
+After the first registry release, this workflow will install the default Vexcalibur package and print its command help:
 
 ```yaml
 version: 2.1
@@ -31,48 +38,31 @@ orbs:
   vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
 
 workflows:
-  vexcalibur:
+  inspect-vexcalibur:
     jobs:
       - vexcalibur/run:
           checkout: false
-          constraints_file: /home/circleci/project/.github/vexcalibur-constraints.txt
           args: --help
 ```
 
-OSV-backed commands can send package URLs, versions, or SBOM-derived inventory
-to public OSV. Pass `--allow-public-osv` only when that data sharing is approved
-for the workflow.
+The job succeeds when Vexcalibur installs and exits with status `0`.
 
-```yaml
-version: 2.1
+The orb also includes two workflow templates:
 
-orbs:
-  vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
+- [Generate and preserve CycloneDX VEX from an SBOM](src/examples/generate_vex_from_sbom.yml)
+- [Query public OSV with an approved package inventory](src/examples/query_public_osv.yml)
 
-workflows:
-  query-public-osv:
-    jobs:
-      - vexcalibur/run:
-          checkout: false
-          args: |
-            query-osv
-            --allow-public-osv
-            --
-            pkg:pypi/django@1.2
-```
+Every nonempty line in `args` becomes one command-line argument. Write flags and their values on separate lines. The orb does not split a line on spaces or evaluate it as shell code.
 
-## Development
+Vexcalibur refuses to send package URLs, versions, or SBOM inventory to public OSV unless the command includes `--allow-public-osv`. Use that flag only when the workflow is allowed to share those values with `https://api.osv.dev`.
 
-Prerequisites:
+## Develop the orb
 
-- Python with `pip`
-- ShellCheck
-- detect-secrets
-- CircleCI CLI for `scripts/validate-circleci.sh`
-
-Run local checks:
+You need Bash, Git, Python 3.10 or newer with `pip` and `venv`, ShellCheck, and the [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/). Run these commands from the repository root:
 
 ```bash
+python -m venv .venv
+. .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 bash -n scripts/*.sh
 bash -n src/scripts/*.sh
@@ -83,14 +73,16 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-GitHub CI runs syntax, YAML/JSON, CircleCI config, shell, secret, and unit-test
-checks. CircleCI publishing requires the project setup described in
-[Orb publishing setup](docs/how-to/publish-orb.md).
+The checks should exit with status `0`. The last command packs the orb and validates the packed orb, the setup configuration, and the continuation configuration.
 
-## Project Links
+## Documentation
 
-- [Orb reference](docs/reference/orb.md)
-- [Publish the orb](docs/how-to/publish-orb.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [License](LICENSE)
+- [Orb interface reference](docs/reference/orb.md) describes every public parameter and the runner's failure behavior.
+- [Runtime and trust boundaries](docs/explanation/runtime-and-trust.md) explains installation isolation, network access, and credential handling.
+- [Publish the orb](docs/how-to/publish-orb.md) covers maintainer setup, development publication, release, and recovery.
+- [Contributing](CONTRIBUTING.md) explains the source layout and pull request checks.
+- [Security policy](SECURITY.md) explains private vulnerability reporting and secret handling.
+- [Code of conduct](https://github.com/vexcalibur-dev/.github/blob/main/CODE_OF_CONDUCT.md) sets participation expectations.
+- [Apache-2.0 license](LICENSE) contains the project license.
+
+Use [GitHub issues](https://github.com/vexcalibur-dev/vexcalibur-orb/issues) for questions and non-sensitive defects. Report vulnerabilities through the private channel in the security policy.
