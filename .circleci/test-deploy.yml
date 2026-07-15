@@ -84,7 +84,7 @@ jobs:
             --csaf-publisher-name
             Vexcalibur Product Security
             --csaf-publisher-namespace
-            https://vexcalibur.dev
+            https://github.com/vexcalibur-dev
             --csaf-publisher-category
             vendor
             --csaf-document-status
@@ -130,7 +130,7 @@ jobs:
             assert csaf_document["publisher"] == {
                 "category": "vendor",
                 "name": "Vexcalibur Product Security",
-                "namespace": "https://vexcalibur.dev",
+                "namespace": "https://github.com/vexcalibur-dev",
             }
             assert csaf_document["title"] == "Vexcalibur orb acceptance test"
             tracking = csaf_document["tracking"]
