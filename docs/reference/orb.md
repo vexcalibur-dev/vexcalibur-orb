@@ -12,13 +12,15 @@ The release will be a community orb. CircleCI organizations must [allow uncertif
 | --- | --- |
 | CircleCI configuration version | `2.1` |
 | Default Vexcalibur package | `vexcalibur==0.3.1` |
-| Default executor image | `cimg/python:3.14` |
+| Default executor image | `cimg/python:3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` |
 | Intended first orb version | `0.1.0` |
 | VEX formats in generation examples | CycloneDX 1.6 VEX JSON, OpenVEX 0.2.0 JSON, and CSAF 2.0 VEX JSON |
 | Registry home | `https://github.com/vexcalibur-dev/vexcalibur` |
 | Orb source | `https://github.com/vexcalibur-dev/vexcalibur-orb` |
 
-The Python image uses a minor-version tag, so CircleCI can resolve a newer `3.14.x` image over time. Set `python_version` on the job or `tag` on the executor when a workflow needs a specific image tag.
+The default Python image includes a digest, so CircleCI resolves the reviewed
+`3.14.5` image. Set `python_version` on the job or `tag` on the executor when a
+workflow needs another image.
 
 ## Command: `run_vexcalibur`
 
@@ -122,7 +124,7 @@ If installation fails, the command returns pip's nonzero status. If Vexcalibur r
 
 | Parameter | Type | Default | Contract |
 | --- | --- | --- | --- |
-| `python_version` | string | `3.14` | Image tag passed to the `python` executor. |
+| `python_version` | string | `3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` | Image reference suffix passed to the `python` executor. |
 | `checkout` | boolean | `true` | Runs the CircleCI `checkout` step before Vexcalibur when `true`. |
 | `package_spec` | string | `vexcalibur==0.3.1` | Passed to the command unchanged. |
 | `allow_development_package_spec` | boolean | `false` | Passed to the command unchanged. |
@@ -137,7 +139,7 @@ The `python` executor runs one Docker image.
 
 | Parameter | Type | Default | Contract |
 | --- | --- | --- | --- |
-| `tag` | string | `3.14` | Appended to `cimg/python:` as the Docker image tag. |
+| `tag` | string | `3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` | Image reference suffix appended to `cimg/python:`. |
 
 For example, `tag: 3.14.1` selects `cimg/python:3.14.1`.
 
