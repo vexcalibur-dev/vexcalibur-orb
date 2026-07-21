@@ -1,9 +1,12 @@
+---
 description: Run Vexcalibur in a CircleCI Python convenience image.
 
 parameters:
   tag:
     type: string
-    default: "3.14"
+    # yamllint disable rule:line-length
+    default: "3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805"  # pragma: allowlist secret
+    # yamllint enable rule:line-length
     description: Tag appended to cimg/python to select the Docker image.
 
 docker:

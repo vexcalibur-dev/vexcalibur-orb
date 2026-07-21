@@ -1,4 +1,7 @@
-description: Generate OpenVEX from a local SBOM and findings file, then store it as an artifact.
+---
+description: >-
+  Generate OpenVEX from a local SBOM and findings file, then store it as an
+  artifact.
 
 usage:
   version: 2.1

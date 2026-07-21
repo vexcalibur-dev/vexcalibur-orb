@@ -26,10 +26,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install workflow tools
+        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        with:
+          version: "v2026.7.11"
+          install_args: "shellcheck"
+          cache: true
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.5"
 
       - name: Install development dependencies
         run: python -m pip install -r requirements-dev.txt

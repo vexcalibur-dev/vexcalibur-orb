@@ -1,4 +1,6 @@
-description: Generate CSAF 2.0 VEX from local inputs, then store it as an artifact.
+---
+description: >-
+  Generate CSAF 2.0 VEX from local inputs, then store it as an artifact.
 
 usage:
   version: 2.1

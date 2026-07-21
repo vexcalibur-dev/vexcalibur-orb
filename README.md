@@ -21,7 +21,7 @@ The source currently has these defaults:
 | Surface | Default |
 | --- | --- |
 | Vexcalibur package | `vexcalibur==0.3.1` |
-| Python image | `cimg/python:3.14` |
+| Python image | `cimg/python:3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` |
 | Repository checkout in the reusable job | Enabled |
 | Public OSV access | Disabled unless the caller passes `--allow-public-osv` |
 
@@ -64,12 +64,33 @@ When `--output` names a CSAF file, Vexcalibur ties its basename to the document 
 
 ## Develop the orb
 
-You need Bash, Git, Python 3.10 or newer with `pip` and `venv`, ShellCheck, and the [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/). Run these commands from the repository root:
+You need Bash, Git, and a version manager that reads
+[`.tool-versions`](.tool-versions), such as mise or asdf. The file pins Python,
+pre-commit, ShellCheck, and the [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/).
+Install the tools with one compatible version manager. With mise:
+
+```bash
+mise trust
+mise install
+pre-commit install
+```
+
+With asdf, install the repository-pinned plugins, then install the versions in
+`.tool-versions`:
+
+```bash
+bash scripts/install-asdf-plugins.sh
+asdf install
+pre-commit install
+```
+
+Then run these checks from the repository root:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements-dev.txt
+pre-commit run --all-files
 bash -n scripts/*.sh
 bash -n src/scripts/*.sh
 shellcheck scripts/*.sh
@@ -79,7 +100,9 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-The checks should exit with status `0`. The last command packs the orb, resolves both CircleCI configurations, checks the publication executor pin and checksum-step order, and validates the packed and processed configurations.
+The checks should exit with status `0`. The last command packs the orb, resolves
+both CircleCI configurations, checks the publication executor pin and
+checksum-step order, and validates the packed and processed configurations.
 
 ## Documentation
 

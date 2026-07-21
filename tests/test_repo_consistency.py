@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,10 @@ PINNED_CIRCLECI_CLI_IMAGE = (
     "circleci/circleci-cli:0.1.38646@sha256:"
     "2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926"  # pragma: allowlist secret
 )
+PINNED_CIMG_PYTHON_TAG = (
+    "3.14.5@sha256:"
+    "724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805"  # pragma: allowlist secret
+)
 PINNED_SCORECARD_ACTIONS = [
     "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
     "ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a",
@@ -35,6 +40,81 @@ PINNED_SCORECARD_ACTIONS = [
 
 
 class RepositoryConsistencyTests(unittest.TestCase):
+    def test_version_manager_manifests_are_consistent(self) -> None:
+        tool_versions = {
+            name: version
+            for name, version in (
+                line.split(maxsplit=1)
+                for line in (REPO_ROOT / ".tool-versions").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            )
+        }
+        with (REPO_ROOT / "mise.toml").open("rb") as stream:
+            mise_configuration = tomllib.load(stream)
+        with (REPO_ROOT / "mise.lock").open("rb") as stream:
+            mise_lock = tomllib.load(stream)
+
+        self.assertTrue(mise_configuration["settings"]["lockfile"])
+        self.assertEqual(mise_configuration["tools"], tool_versions)
+        self.assertEqual(set(mise_lock["tools"]), set(tool_versions))
+        for name, version in tool_versions.items():
+            with self.subTest(tool=name):
+                lock_entries = mise_lock["tools"][name]
+                self.assertEqual(len(lock_entries), 1)
+                lock_entry = lock_entries[0]
+                self.assertEqual(lock_entry["version"], version)
+                for platform in ("linux-x64", "macos-arm64", "macos-x64"):
+                    asset = lock_entry[f"platforms.{platform}"]
+                    self.assertRegex(asset["checksum"], r"^sha256:[0-9a-f]{64}$")
+                    self.assertTrue(asset["url"].startswith("https://"))
+
+        ci_workflow = yaml.safe_load(
+            (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        setup_python = next(
+            step
+            for step in ci_workflow["jobs"]["quality"]["steps"]
+            if step.get("name") == "Set up Python"
+        )
+        self.assertEqual(setup_python["with"]["python-version"], tool_versions["python"])
+
+        circleci_configuration = yaml.safe_load(
+            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            circleci_configuration["jobs"]["shellcheck"]["docker"],
+            [
+                {
+                        "image": (
+                            "cimg/base:2026.07@sha256:"
+                            "6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3"  # pragma: allowlist secret
+                    )
+                }
+            ],
+        )
+        shellcheck_install = next(
+            step["shellcheck/install"]
+            for step in circleci_configuration["jobs"]["shellcheck"]["steps"]
+            if isinstance(step, dict) and "shellcheck/install" in step
+        )
+        self.assertEqual(shellcheck_install["version"], tool_versions["shellcheck"])
+
+        job_source = yaml.safe_load(
+            (REPO_ROOT / "src/jobs/run.yml").read_text(encoding="utf-8")
+        )
+        executor_source = yaml.safe_load(
+            (REPO_ROOT / "src/executors/python.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            job_source["parameters"]["python_version"]["default"],
+            PINNED_CIMG_PYTHON_TAG,
+        )
+        self.assertEqual(
+            executor_source["parameters"]["tag"]["default"],
+            PINNED_CIMG_PYTHON_TAG,
+        )
+
     def test_default_package_spec_is_consistent(self) -> None:
         specs_by_path: dict[str, set[str]] = {}
         for relative_path in PACKAGE_SPEC_FILES:
@@ -179,6 +259,14 @@ class RepositoryConsistencyTests(unittest.TestCase):
             self.fail("CircleCI CLI version and checksum pins must both be present")
         self.assertTrue(CIRCLECI_CLI_VERSION_PATTERN.fullmatch(version_match.group(1)))
         self.assertTrue(SHA256_PATTERN.fullmatch(checksum_match.group(1)))
+
+        tool_versions = (REPO_ROOT / ".tool-versions").read_text(encoding="utf-8")
+        local_version_match = re.search(
+            r"^circleci-cli ([0-9.]+)$", tool_versions, re.MULTILINE
+        )
+        if local_version_match is None:
+            self.fail(".tool-versions must pin circleci-cli")
+        self.assertEqual(local_version_match.group(1), version_match.group(1))
 
     def test_circleci_orb_imports_use_exact_versions(self) -> None:
         references: dict[str, str] = {}

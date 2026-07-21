@@ -10,10 +10,29 @@ You need:
 
 - Bash
 - Git
-- Python 3.10 or newer with `pip` and `venv`
-- The [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/) for orb and configuration validation
+- A version manager that reads [`.tool-versions`](.tool-versions), such as mise or asdf
 
-The development requirements install ShellCheck, `detect-secrets`, and PyYAML. From the repository root, create an isolated environment:
+The tool file pins Python, pre-commit, ShellCheck, and the
+[CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/). Install
+those tools before creating the development environment:
+
+```bash
+mise trust
+mise install
+pre-commit install
+```
+
+To use asdf instead, install the repository-pinned plugins, then install the
+versions in `.tool-versions`:
+
+```bash
+bash scripts/install-asdf-plugins.sh
+asdf install
+pre-commit install
+```
+
+The development requirements install `detect-secrets` and PyYAML. From the
+repository root, create an isolated environment:
 
 ```bash
 python -m venv .venv
@@ -27,7 +46,26 @@ Check the CircleCI CLI before running the full validation suite:
 circleci version
 ```
 
-GitHub CI pins its CircleCI CLI version in [`.github/workflows/ci.yml`](.github/workflows/ci.yml). If local and CI validation disagree, test with that version before changing source to accommodate the difference.
+GitHub CI verifies the same CircleCI CLI release before configuration
+validation. If local and CI validation disagree, test with the version in
+`.tool-versions` before changing source to accommodate the difference.
+The CircleCI pipeline installs the matching ShellCheck release before it lints
+the repository. Its base image is pinned by digest too.
+
+## Update development tools
+
+Keep [`.tool-versions`](.tool-versions) and [`mise.toml`](mise.toml) on the
+same exact versions. After changing a tool version, refresh the committed Mise
+artifact metadata for the supported developer platforms:
+
+```bash
+mise trust
+mise lock --platform linux-x64 --platform macos-x64 --platform macos-arm64
+```
+
+[`scripts/install-asdf-plugins.sh`](scripts/install-asdf-plugins.sh) pins the
+asdf plugin commits separately. Update a plugin reference only after reviewing
+the intended upstream revision; do not use `asdf plugin update --all`.
 
 ## Find the source you need
 
@@ -41,7 +79,8 @@ The orb development kit packs the public interface from `src/`:
 | `src/executors/python.yml` | Python Docker executor |
 | `src/scripts/run-vexcalibur.sh` | Package validation, isolated installation, and CLI execution |
 | `src/examples/` | Examples shown with the published orb |
-| `scripts/install-circleci-cli.sh` | Fail-closed CircleCI CLI download and verification used by GitHub CI |
+| `scripts/install-asdf-plugins.sh` | Pinned asdf plugin installer for local development |
+| `scripts/install-circleci-cli.sh` | Verified CircleCI CLI download used by GitHub CI |
 | `docs/reference/orb.md` | Public interface and runtime reference |
 
 Tests under `tests/` exercise the runner and guard repeated defaults against drift. `.circleci/config.yml` validates and packs the source. It then passes control to `.circleci/test-deploy.yml`, which tests the packed source and controls publication. Both configurations pin production orb imports to full semantic versions. The pack, continuation, and publish jobs also pin the CircleCI CLI container by version and image digest.
@@ -63,6 +102,7 @@ Each nonempty `args` line is one literal Vexcalibur argument. Examples must put 
 Activate the development environment, then run the same classes of checks used in CI:
 
 ```bash
+pre-commit run --all-files
 bash -n scripts/*.sh
 bash -n src/scripts/*.sh
 shellcheck scripts/*.sh
@@ -96,7 +136,7 @@ You need GitHub CLI access to the public [`CircleCI-Public/circleci-cli`](https:
 
    Continue only when the tag matches, `isDraft` and `isPrerelease` are both `false`, every listed asset has a `sha256:` digest, and the release includes the checksum manifest plus Linux archives for `amd64` and `arm64`.
 
-2. Copy the digest for `circleci-cli_${VERSION}_checksums.txt`, without its `sha256:` prefix. Update `CIRCLECI_CLI_VERSION` and `CIRCLECI_CLI_CHECKSUMS_SHA256` together in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+2. Copy the digest for `circleci-cli_${VERSION}_checksums.txt`, without its `sha256:` prefix. Update `CIRCLECI_CLI_VERSION` and `CIRCLECI_CLI_CHECKSUMS_SHA256` together in [`.github/workflows/ci.yml`](.github/workflows/ci.yml), then update the matching `circleci-cli` entry in [`.tool-versions`](.tool-versions).
 
 3. Resolve, inspect, and validate the container manifest for the same version. Run this block in Bash from any directory:
 

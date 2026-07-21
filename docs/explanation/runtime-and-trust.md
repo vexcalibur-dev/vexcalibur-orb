@@ -34,7 +34,7 @@ The runner also avoids a shell round trip for Vexcalibur arguments. Each nonempt
 
 The default `package_spec` pins Vexcalibur itself to the exact release listed in the [orb reference](../reference/orb.md#compatibility-and-defaults). Pip still resolves and downloads its dependencies each time the command runs. A `constraints_file` can pin those transitive versions, but the runner doesn't enable pip's hash-checking mode.
 
-The default executor also uses the moving minor tag `cimg/python:3.14`. Pin `python_version` to a patch tag and use a reviewed constraints file when repeatability matters. Those choices reduce drift; they don't turn the job into a hermetic build because container tags and package indexes remain external inputs.
+The default executor pins `cimg/python:3.14.5` by digest. Keep that default unless you have a reason to use another image. A reviewed constraints file can further limit pip dependency changes, but the job is not hermetic because package indexes remain external inputs.
 
 Setting `allow_development_package_spec` broadens the code that pip may install and execute. Use it only with a source and revision that the workflow owner trusts. The runner's input checks catch leading pip options and a common credential-bearing URL form, not every unsafe requirement syntax.
 
