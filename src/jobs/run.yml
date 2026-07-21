@@ -1,4 +1,6 @@
-description: Optionally check out the project, then run Vexcalibur in the Python executor.
+---
+description: >-
+  Optionally check out the project, then run Vexcalibur in the Python executor.
 
 executor:
   name: python
@@ -8,7 +10,8 @@ parameters:
   python_version:
     type: string
     default: "3.14"
-    description: Tag for the cimg/python Docker image used by the Python executor.
+    description: >-
+      Tag for the cimg/python Docker image used by the Python executor.
   checkout:
     type: boolean
     default: true
@@ -20,15 +23,21 @@ parameters:
   allow_development_package_spec:
     type: boolean
     default: false
-    description: Allow a non-release package requirement. Use this only with a trusted source in development workflows.
+    description: >-
+      Allow a non-release package requirement. Use this only with a trusted
+      source in development workflows.
   constraints_file:
     type: string
     default: ""
-    description: Readable absolute path to a pip constraints file. Empty applies no constraints.
+    description: >-
+      Readable absolute path to a pip constraints file. Empty applies no
+      constraints.
   args:
     type: string
     default: --help
-    description: Arguments for the Vexcalibur CLI. Each nonempty line becomes one literal argument.
+    description: >-
+      Arguments for the Vexcalibur CLI. Each nonempty line becomes one literal
+      argument.
 
 steps:
   - when:
@@ -37,6 +46,7 @@ steps:
         - checkout
   - run_vexcalibur:
       package_spec: << parameters.package_spec >>
-      allow_development_package_spec: << parameters.allow_development_package_spec >>
+      allow_development_package_spec: >-
+        << parameters.allow_development_package_spec >>
       constraints_file: << parameters.constraints_file >>
       args: << parameters.args >>

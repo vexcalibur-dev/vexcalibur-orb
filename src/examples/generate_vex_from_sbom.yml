@@ -1,4 +1,7 @@
-description: Generate deterministic CycloneDX VEX and store it as an artifact. The caller must provide the SBOM and findings paths shown.
+---
+description: >-
+  Generate deterministic CycloneDX VEX and store it as an artifact. The caller
+  must provide the SBOM and findings paths shown.
 
 usage:
   version: 2.1
