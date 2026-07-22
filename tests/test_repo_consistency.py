@@ -172,6 +172,13 @@ class RepositoryConsistencyTests(unittest.TestCase):
         )
         self.assertEqual(scorecard_step["with"]["publish_results"], "false")
 
+        upload_step = next(
+            step
+            for step in scorecard["steps"]
+            if step.get("name") == "Upload Scorecard SARIF"
+        )
+        self.assertEqual(upload_step["if"], "github.event_name != 'pull_request'")
+
     def test_dependabot_covers_python_and_github_actions(self) -> None:
         configuration = yaml.safe_load(
             (REPO_ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
