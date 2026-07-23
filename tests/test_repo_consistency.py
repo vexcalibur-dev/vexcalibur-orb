@@ -179,19 +179,42 @@ class RepositoryConsistencyTests(unittest.TestCase):
         )
         self.assertEqual(upload_step["if"], "github.event_name != 'pull_request'")
 
-    def test_dependabot_covers_python_and_github_actions(self) -> None:
-        configuration = yaml.safe_load(
-            (REPO_ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+    def test_renovate_update_policy_is_explicit(self) -> None:
+        configuration = json.loads(
+            (REPO_ROOT / "renovate.json").read_text(encoding="utf-8")
         )
-        updates = configuration["updates"]
 
+        self.assertEqual(configuration["timezone"], "America/Chicago")
+        self.assertEqual(configuration["schedule"], ["* 8-11 * * 1"])
+        self.assertEqual(configuration["prHourlyLimit"], 2)
+        self.assertEqual(configuration["minimumReleaseAge"], "5 days")
         self.assertEqual(
-            {update["package-ecosystem"] for update in updates},
-            {"pip", "github-actions"},
+            configuration["minimumReleaseAgeBehaviour"], "timestamp-required"
         )
-        for update in updates:
-            self.assertEqual(update["directory"], "/")
-            self.assertEqual(update["schedule"]["interval"], "weekly")
+        self.assertEqual(configuration["internalChecksFilter"], "strict")
+        self.assertEqual(
+            configuration["enabledManagers"],
+            ["github-actions", "pip_requirements"],
+        )
+        self.assertEqual(configuration["vulnerabilityAlerts"], {"enabled": False})
+        self.assertIn("helpers:pinGitHubActionDigests", configuration["extends"])
+        self.assertNotIn("automergeType", configuration)
+        self.assertNotIn("platformAutomerge", configuration)
+        self.assertEqual(
+            configuration["packageRules"],
+            [
+                {
+                    "description": "Group reviewable GitHub Actions updates.",
+                    "matchManagers": ["github-actions"],
+                    "groupName": "GitHub Actions",
+                },
+                {
+                    "description": "Group reviewable Python updates.",
+                    "matchManagers": ["pip_requirements"],
+                    "groupName": "Python requirements",
+                },
+            ],
+        )
 
     def test_security_policy_uses_private_vulnerability_reporting(self) -> None:
         policy = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")

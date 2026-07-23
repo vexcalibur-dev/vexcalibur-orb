@@ -3,7 +3,7 @@
 
 # These paths control CI, publication, and the consumer runtime boundary.
 /.github/CODEOWNERS @dannysauer
-/.github/dependabot.yml @dannysauer
+/renovate.json @dannysauer
 /.github/workflows/ @dannysauer
 /.circleci/ @dannysauer
 /scripts/ @dannysauer
