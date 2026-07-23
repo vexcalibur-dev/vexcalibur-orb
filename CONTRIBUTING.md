@@ -76,6 +76,11 @@ committed Mise metadata. Use [Update development tools](#update-development-tool
 and [Update the CircleCI CLI pins](#update-the-circleci-cli-pins) so each
 coordinated change stays complete.
 
+Renovate waits five days before it creates a branch for a normal dependency
+update. It requires a registry release timestamp and keeps younger releases out
+of the branch and pull-request queues. Dependabot security fixes are not
+delayed.
+
 Dependabot owns vulnerability-fix pull requests. Keep the dependency graph,
 Dependabot alerts, and Dependabot security updates enabled in the repository
 settings. Renovate's vulnerability updates are disabled to avoid duplicate
