@@ -10,7 +10,6 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "enabledManagers": [
-    "circleci",
     "github-actions",
     "pip_requirements"
   ],
@@ -18,11 +17,6 @@
     "enabled": false
   },
   "packageRules": [
-    {
-      "description": "Group reviewable CircleCI updates.",
-      "matchManagers": ["circleci"],
-      "groupName": "CircleCI"
-    },
     {
       "description": "Group reviewable GitHub Actions updates.",
       "matchManagers": ["github-actions"],

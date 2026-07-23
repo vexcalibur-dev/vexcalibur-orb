@@ -67,6 +67,20 @@ mise lock --platform linux-x64 --platform macos-x64 --platform macos-arm64
 asdf plugin commits separately. Update a plugin reference only after reviewing
 the intended upstream revision; do not use `asdf plugin update --all`.
 
+## Review Renovate updates
+
+Renovate groups Python requirements and GitHub Actions updates, but every update
+stays open for review. It does not update CircleCI dependencies or developer
+tool versions because those pins are repeated with checksums, image digests, or
+committed Mise metadata. Use [Update development tools](#update-development-tools)
+and [Update the CircleCI CLI pins](#update-the-circleci-cli-pins) so each
+coordinated change stays complete.
+
+Dependabot owns vulnerability-fix pull requests. Keep the dependency graph,
+Dependabot alerts, and Dependabot security updates enabled in the repository
+settings. Renovate's vulnerability updates are disabled to avoid duplicate
+security pull requests.
+
 ## Find the source you need
 
 The orb development kit packs the public interface from `src/`:

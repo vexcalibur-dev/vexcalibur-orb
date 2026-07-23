@@ -189,7 +189,7 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertEqual(configuration["prHourlyLimit"], 2)
         self.assertEqual(
             configuration["enabledManagers"],
-            ["circleci", "github-actions", "pip_requirements"],
+            ["github-actions", "pip_requirements"],
         )
         self.assertEqual(configuration["vulnerabilityAlerts"], {"enabled": False})
         self.assertIn("helpers:pinGitHubActionDigests", configuration["extends"])
@@ -198,11 +198,6 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertEqual(
             configuration["packageRules"],
             [
-                {
-                    "description": "Group reviewable CircleCI updates.",
-                    "matchManagers": ["circleci"],
-                    "groupName": "CircleCI",
-                },
                 {
                     "description": "Group reviewable GitHub Actions updates.",
                     "matchManagers": ["github-actions"],
