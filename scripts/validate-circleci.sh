@@ -57,7 +57,7 @@ circleci config process --skip-update-check "$inline_config" \
   > "$processed_inline_config"
 circleci config validate --skip-update-check "$processed_inline_config"
 
-"$python_bin" - "$processed_setup_config" "$processed_inline_config" <<'PY'
+"$python_bin" - "$processed_setup_config" "$processed_inline_config" .circleci/test-deploy.yml <<'PY'
 from __future__ import annotations
 
 import sys
@@ -119,4 +119,43 @@ for job_name in ("publish-dev", "publish-release"):
         raise SystemExit(f"{job_name} is missing an integrity or publish step") from error
     if verify_index >= publish_index:
         raise SystemExit(f"{job_name} publishes before verifying the packed orb")
+
+test_deploy = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
+workflow_jobs = test_deploy.get("workflows", {}).get("test-deploy", {}).get("jobs", [])
+if not isinstance(workflow_jobs, list):
+    raise SystemExit("test-deploy workflow has no jobs list")
+
+if any("approve-dev-publish" in job for job in workflow_jobs if isinstance(job, dict)):
+    raise SystemExit("development publication must not require a manual approval job")
+
+publish_dev = next(
+    (
+        job["orb-tools/publish"]
+        for job in workflow_jobs
+        if isinstance(job, dict)
+        and isinstance(job.get("orb-tools/publish"), dict)
+        and job["orb-tools/publish"].get("name") == "publish-dev"
+    ),
+    None,
+)
+if not isinstance(publish_dev, dict):
+    raise SystemExit("test-deploy workflow has no publish-dev job")
+
+expected_dependencies = {
+    "pack-dev",
+    "command-help-test",
+    "format-output-test",
+    "job-help-test",
+}
+if set(publish_dev.get("requires", [])) != expected_dependencies:
+    raise SystemExit("publish-dev must require every credentialless development check")
+
+if publish_dev.get("context") != "orb-publishing":
+    raise SystemExit("publish-dev must use the restricted orb-publishing context")
+
+filters = publish_dev.get("filters", {})
+if filters.get("branches", {}).get("only") != "main":
+    raise SystemExit("publish-dev must run only from main")
+if filters.get("tags", {}).get("ignore") != "/.*/":
+    raise SystemExit("publish-dev must not run from tags")
 PY

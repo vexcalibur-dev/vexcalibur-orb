@@ -287,14 +287,6 @@ workflows:
                   - orb.yml
                   - orb.yml.sha256
           filters: *dev-publish-filters
-      - approve-dev-publish:
-          type: approval
-          requires:
-            - pack-dev
-            - command-help-test
-            - format-output-test
-            - job-help-test
-          filters: *dev-publish-filters
       - orb-tools/publish:
           name: publish-dev
           executor: pinned-circleci-cli
@@ -309,7 +301,10 @@ workflows:
                 at: dist
             - verify-packed-orb
           requires:
-            - approve-dev-publish
+            - pack-dev
+            - command-help-test
+            - format-output-test
+            - job-help-test
           filters: *dev-publish-filters
       - orb-tools/pack:
           name: pack-release

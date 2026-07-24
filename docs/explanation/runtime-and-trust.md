@@ -60,7 +60,7 @@ CircleCI controls the job's effective permissions, context access, artifact visi
 
 The repository's own publication workflow does not give the registry token to the jobs that pack or test the orb. Those jobs record the packed `orb.yml` SHA-256 and pass the file with its checksum through a CircleCI workspace. Only the later publish job receives the restricted `orb-publishing` context. It runs in a CircleCI CLI image pinned by tag and registry digest and verifies the checksum before invoking the registry command.
 
-The checksum detects corruption between the pack and publish steps, but it does not independently authenticate CircleCI's workspace because the file and checksum use the same storage path. Context restrictions, release approval, CircleCI workspace controls, and the immutable executor pin are all part of this boundary. The [publishing guide](../how-to/publish-orb.md) describes the release procedure and recovery checks.
+The checksum detects corruption between the pack and publish steps, but it does not independently authenticate CircleCI's workspace because the file and checksum use the same storage path. Context restrictions, successful prerequisite jobs, CircleCI workspace controls, and the immutable executor pin are all part of this boundary. The [publishing guide](../how-to/publish-orb.md) describes the release procedure and recovery checks.
 
 ## Output survives only when the workflow preserves it
 

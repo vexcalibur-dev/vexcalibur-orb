@@ -1,8 +1,8 @@
 # Publish the orb
 
-This guide is for Vexcalibur maintainers who can administer the CircleCI organization, its contexts, and GitHub release tags. The orb is not in the CircleCI registry yet.
+This guide is for Vexcalibur maintainers who can administer the CircleCI organization, its contexts, and GitHub release tags. The `vexcalibur-dev/vexcalibur` registry entry exists and development versions publish from `main` after the hosted checks pass.
 
-[Issue #1](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/1) tracks the one-time setup described here.
+The one-time CircleCI setup is complete.
 
 A production orb version is immutable. Complete the development publication and verification before creating a release tag.
 
@@ -61,9 +61,9 @@ Skip a step when the named resource already exists and is owned by the expected 
 
 7. Add a project restriction that limits `orb-publishing` to `vexcalibur-dev/vexcalibur-orb`. Don't leave a publishing context available to every project in the organization.
 
-8. Restrict the context to the security group for release maintainers. CircleCI supports context security groups only with its GitHub OAuth integration.
+8. If the organization has a GitHub team for release maintainers, also restrict the context to that security group. CircleCI supports context security groups only with its GitHub OAuth integration.
 
-   If the project uses another integration, stop here and resolve the release authorization design in issue #1. A project restriction alone doesn't limit which project member can approve a job. With the GitHub OAuth integration, a user who approves the development job must belong to the permitted group.
+   A project restriction is required. A security-group restriction is optional for an organization with a single trusted maintainer, but becomes useful when more maintainers have CircleCI access.
 
 9. Add a GitHub tag ruleset for `v*`. Limit tag creation and deletion to release maintainers. The CircleCI release workflow narrows production tags further to `vMAJOR.MINOR.PATCH`.
 
@@ -98,18 +98,18 @@ The checksum detects an artifact that changed between the two stages. Because th
 
 ## Publish and test a development version
 
-Push the release candidate to `main`. CircleCI should run the setup workflow, then continue into `test-deploy` with the packed local orb inserted under the `vexcalibur` name.
+Push the release candidate to `main`. CircleCI runs the setup workflow, then continues into `test-deploy` with the packed local orb inserted under the `vexcalibur` name.
 
-Before approval, confirm all four prerequisites for `approve-dev-publish` succeeded:
+`publish-dev` runs automatically after all four prerequisites succeed:
 
 - `pack-dev`
 - `command-help-test`
 - `format-output-test`
 - `job-help-test`
 
-Open the `pack-dev` artifacts and confirm `packed-orb/orb.yml.sha256` contains one SHA-256 entry for `orb.yml`. The `publish-dev` job verifies that entry automatically; approval does not bypass the verification step.
+Open the `pack-dev` artifacts and confirm `packed-orb/orb.yml.sha256` contains one SHA-256 entry for `orb.yml`. The `publish-dev` job verifies that entry before it publishes.
 
-Approve `approve-dev-publish`. The following `publish-dev` job uses the restricted context to publish two development aliases: `dev:<commit-sha>` and `dev:alpha`. Development versions expire after 90 days; `dev:alpha` can move, so verify the commit-specific alias.
+The `publish-dev` job uses the restricted context to publish two development aliases: `dev:<commit-sha>` and `dev:alpha`. Development versions expire after 90 days; `dev:alpha` can move, so verify the commit-specific alias.
 
 From a checkout of the published commit, run:
 
@@ -196,7 +196,7 @@ If a publishing credential may have been exposed, revoke it before retrying anyt
 | Symptom | Check |
 | --- | --- |
 | Setup workflow doesn't continue | Confirm the project is connected and dynamic config is enabled. Then inspect `orb-tools/continue`. |
-| `No Orb Publishing Token detected` | Confirm the `orb-publishing` context is attached, its variable is named `CIRCLE_TOKEN`, and the approving user can access the context. |
+| `No Orb Publishing Token detected` | Confirm the `orb-publishing` context is attached, its variable is named `CIRCLE_TOKEN`, and the project can access the context. |
 | Packed orb SHA-256 does not match | Do not retry publication unchanged. Inspect the `pack-dev` or `pack-release` checksum artifact and workspace-producing job, then rerun from a trusted commit after finding the cause. |
 | Registry says the namespace or orb doesn't exist | Complete the one-time namespace and orb creation with the Vexcalibur CircleCI organization. |
 | `release-source-check` fails | Confirm the tag commit is reachable from `origin/main`. Don't weaken or bypass the check. |
