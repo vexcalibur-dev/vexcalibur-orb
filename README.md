@@ -10,9 +10,15 @@ The orb installs an exact Vexcalibur release into a temporary virtual environmen
 
 ## Project status
 
-The orb has not been published to the CircleCI registry. The configuration examples in this repository preview the intended first release. `vexcalibur-dev/vexcalibur@0.1.0` cannot be resolved until that release exists.
+The public CircleCI registry contains the development orb
+`vexcalibur-dev/vexcalibur@dev:alpha`. Trusted builds from `main` publish that
+development reference automatically, so its contents can change. Use it to
+inspect the interface, not as a production pin. Do not import a development
+orb into a project that has environment variables, contexts, private source,
+or other credentials.
 
-[Issue #1](https://github.com/vexcalibur-dev/vexcalibur-orb/issues/1) tracks the remaining account and publishing setup.
+No production orb has been published. `vexcalibur-dev/vexcalibur@0.1.0` cannot
+be resolved until the first production release exists.
 
 The public release will be a community orb. A CircleCI organization administrator must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before that organization can import it.
 
@@ -27,32 +33,27 @@ The source currently has these defaults:
 
 For a Vexcalibur integration that is available today, see the [Vexcalibur GitHub Action](https://github.com/vexcalibur-dev/vexcalibur-action).
 
-## Preview the orb interface
+## Inspect the development orb
 
-After the first registry release, this workflow will install the default Vexcalibur package and print its command help:
+Inspect the current registry metadata without executing the orb:
 
-```yaml
-version: 2.1
-
-orbs:
-  vexcalibur: vexcalibur-dev/vexcalibur@0.1.0
-
-workflows:
-  inspect-vexcalibur:
-    jobs:
-      - vexcalibur/run:
-          checkout: false
-          args: --help
+```bash
+circleci orb info vexcalibur-dev/vexcalibur@dev:alpha
 ```
 
-The job succeeds when Vexcalibur installs and exits with status `0`.
+The command reports the orb's registry metadata and counts for its commands,
+executors, and jobs. It does not run orb code or grant access to a CircleCI
+project.
 
-The orb also includes four workflow templates:
+The repository includes four templates for the intended production release:
 
 - [Generate and preserve CycloneDX VEX from an SBOM](src/examples/generate_vex_from_sbom.yml)
 - [Generate and preserve OpenVEX from local findings](src/examples/generate_openvex.yml)
 - [Generate and preserve CSAF 2.0 VEX from local findings](src/examples/generate_csaf.yml)
 - [Query public OSV with an approved package inventory](src/examples/query_public_osv.yml)
+
+These source files import the pending `0.1.0` production version, so they
+cannot run from the registry yet.
 
 Every nonempty line in `args` becomes one command-line argument. Write flags and their values on separate lines. The orb does not split a line on spaces or evaluate it as shell code.
 
