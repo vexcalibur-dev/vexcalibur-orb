@@ -10,12 +10,15 @@ Include the affected source or workflow, impact, reproduction steps, and any sug
 
 ## Supported versions
 
-The orb has not been published to the CircleCI registry. Security fixes currently target the default branch.
+Security fixes currently target the default branch. The registry's
+`dev:alpha` reference is mutable development output and is not a supported
+release.
 
 | Surface | Supported |
 | --- | --- |
 | Source on `main` | Yes |
-| CircleCI registry releases | None exist |
+| `dev:alpha` registry reference | No |
+| Production registry releases | None exist |
 
 This table will change when the first versioned orb is published.
 
