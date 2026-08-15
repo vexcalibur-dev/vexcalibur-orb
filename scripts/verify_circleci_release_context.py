@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from circleci_api import CircleCIError, Client, require_uuid
+from circleci_api import CircleCIError, Client, PROJECT_SLUG, require_uuid
 
 
 ORGANIZATION_NAME = "vexcalibur-dev"
@@ -18,7 +18,6 @@ ORGANIZATION_SLUG = "gh/vexcalibur-dev"
 ORGANIZATION_VCS = "github"
 CONTEXT_NAME = "orb-publishing"
 PROJECT_NAME = "vexcalibur-orb"
-PROJECT_SLUG = f"{ORGANIZATION_SLUG}/{PROJECT_NAME}"
 EXPECTED_EXPRESSION = (
     'pipeline.project.type == "github" and pipeline.project.git_url == '
     '"https://github.com/vexcalibur-dev/vexcalibur-orb" and '
@@ -122,7 +121,7 @@ def verify(token: str) -> tuple[str, str]:
     if not isinstance(project, dict) or project.get("slug") != PROJECT_SLUG:
         fail("CircleCI returned the wrong project identity")
     project_id = require_uuid(project.get("id"), label="project ID")
-    contexts = client.fetch_pages(f"context?owner-id={organization_id}")
+    contexts = client.fetch_pages("context", query={"owner-id": organization_id})
     context = one_named(contexts, name=CONTEXT_NAME, label="context")
     context_id = require_uuid(context.get("id"), label="orb-publishing context ID")
     restrictions = client.fetch_pages(f"context/{context_id}/restrictions")

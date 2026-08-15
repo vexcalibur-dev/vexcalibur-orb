@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import sys
@@ -62,11 +63,22 @@ class CircleCIJsonTests(unittest.TestCase):
             def __init__(self) -> None:
                 pass
 
-            def fetch_json(self, path: str) -> dict[str, object]:
+            def _request_json(
+                self,
+                endpoint: str,
+                *,
+                method: str,
+                payload: dict[str, object] | None = None,
+                query: dict[str, str] | None = None,
+                paginated: bool = False,
+            ) -> dict[str, object]:
+                del endpoint, method, payload, query, paginated
                 return {"items": [], "next_page_token": "same-token"}
 
         with self.assertRaisesRegex(CircleCIError, "repeated pagination token"):
-            RepeatingClient().fetch_pages("pipeline")
+            RepeatingClient().fetch_pages(
+                f"project/{circleci_api.PROJECT_SLUG}/pipeline"
+            )
 
     def test_falsey_nonstring_pagination_tokens_are_rejected(self) -> None:
         for token in (False, 0, [], {}):
@@ -76,11 +88,22 @@ class CircleCIJsonTests(unittest.TestCase):
                     def __init__(self) -> None:
                         pass
 
-                    def fetch_json(self, path: str) -> dict[str, object]:
+                    def _request_json(
+                        self,
+                        endpoint: str,
+                        *,
+                        method: str,
+                        payload: dict[str, object] | None = None,
+                        query: dict[str, str] | None = None,
+                        paginated: bool = False,
+                    ) -> dict[str, object]:
+                        del endpoint, method, payload, query, paginated
                         return {"items": [], "next_page_token": token}
 
                 with self.assertRaisesRegex(CircleCIError, "pagination token"):
-                    MalformedClient().fetch_pages("pipeline")
+                    MalformedClient().fetch_pages(
+                        f"project/{circleci_api.PROJECT_SLUG}/pipeline"
+                    )
 
     def test_client_never_forwards_authentication_across_redirects(self) -> None:
         target_requests: list[str | None] = []
@@ -125,9 +148,9 @@ class CircleCIJsonTests(unittest.TestCase):
             with patch.object(circleci_api, "API_ROOT", api_root):
                 client = Client("operator-token")
                 with self.assertRaisesRegex(CircleCIError, "redirected"):
-                    client.fetch_json("probe")
+                    client.fetch_json("me/collaborations")
                 with self.assertRaisesRegex(CircleCIError, "redirected"):
-                    client.post_json("probe", {"attempt": 1})
+                    client.post_json(f"workflow/{WORKFLOW_1}/rerun", {"attempt": 1})
         finally:
             for server in servers:
                 server.shutdown()
@@ -136,6 +159,164 @@ class CircleCIJsonTests(unittest.TestCase):
                 thread.join(timeout=5)
 
         self.assertEqual(target_requests, [])
+
+    def test_endpoint_policy_is_a_complete_authorization_matrix(self) -> None:
+        cases = (
+            ("GET", "me/collaborations", False, frozenset(), frozenset()),
+            (
+                "GET",
+                f"project/{circleci_api.PROJECT_SLUG}",
+                False,
+                frozenset(),
+                frozenset(),
+            ),
+            (
+                "GET",
+                f"project/{circleci_api.PROJECT_SLUG}/pipeline",
+                True,
+                frozenset(),
+                frozenset({"page-token"}),
+            ),
+            (
+                "GET",
+                "context",
+                True,
+                frozenset({"owner-id"}),
+                frozenset({"owner-id", "page-token"}),
+            ),
+            (
+                "GET",
+                f"context/{WORKFLOW_1}/restrictions",
+                True,
+                frozenset(),
+                frozenset({"page-token"}),
+            ),
+            (
+                "GET",
+                f"pipeline/{PIPELINE_1}/workflow",
+                True,
+                frozenset(),
+                frozenset({"page-token"}),
+            ),
+            ("GET", f"workflow/{WORKFLOW_1}", False, frozenset(), frozenset()),
+            (
+                "GET",
+                f"workflow/{WORKFLOW_1}/job",
+                True,
+                frozenset(),
+                frozenset({"page-token"}),
+            ),
+            (
+                "POST",
+                f"workflow/{WORKFLOW_1}/rerun",
+                False,
+                frozenset(),
+                frozenset(),
+            ),
+        )
+        self.assertEqual(len(cases), len(circleci_api.ENDPOINT_POLICIES))
+        for method, endpoint, paginated, required_query, allowed_query in cases:
+            with self.subTest(method=method, endpoint=endpoint):
+                matches = [
+                    policy
+                    for policy in circleci_api.ENDPOINT_POLICIES
+                    if policy.method == method and policy.endpoint.fullmatch(endpoint)
+                ]
+                self.assertEqual(len(matches), 1)
+                self.assertEqual(matches[0].paginated, paginated)
+                self.assertEqual(matches[0].required_query, required_query)
+                self.assertEqual(matches[0].allowed_query, allowed_query)
+
+    def test_client_rejects_unapproved_operations_and_queries(self) -> None:
+        client = Client("operator-token")
+        rejected = (
+            "https://example.com/capture",
+            "../capture",
+            "workflow/not-a-uuid",
+            f"workflow/{WORKFLOW_1}/rerun?target=example.com",
+            f"workflow/{WORKFLOW_1}/cancel",
+        )
+        for endpoint in rejected:
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(CircleCIError, "not authorized"):
+                    client.fetch_json(endpoint)
+
+        with self.assertRaisesRegex(CircleCIError, "query is not authorized"):
+            client.fetch_pages("context", query={"target": "example.com"})
+
+        with self.assertRaisesRegex(CircleCIError, "missing required parameters"):
+            client.fetch_pages("context")
+        with self.assertRaisesRegex(CircleCIError, "organization ID"):
+            client.fetch_pages("context", query={"owner-id": "not-a-uuid"})
+        with self.assertRaisesRegex(CircleCIError, "pagination mode"):
+            client.fetch_json(f"project/{circleci_api.PROJECT_SLUG}/pipeline")
+        with self.assertRaisesRegex(CircleCIError, "pagination mode"):
+            client.fetch_pages("me/collaborations")
+        with self.assertRaisesRegex(CircleCIError, "endpoint is not authorized"):
+            client.post_json(f"workflow/{WORKFLOW_1}", {})
+        with self.assertRaisesRegex(CircleCIError, "endpoint is not authorized"):
+            client.fetch_json(f"workflow/{WORKFLOW_1}/rerun")
+
+    def test_client_requires_canonical_uuid_values(self) -> None:
+        self.assertEqual(
+            circleci_api.require_uuid(WORKFLOW_1, label="workflow"), WORKFLOW_1
+        )
+        for value in (WORKFLOW_1.upper(), f"{{{WORKFLOW_1}}}", "not-a-uuid"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(CircleCIError, "not a UUID"):
+                    circleci_api.require_uuid(value, label="workflow")
+
+    def test_pagination_tokens_cannot_change_the_authorized_endpoint(self) -> None:
+        request_paths: list[str] = []
+        pagination_token = "../admin?target=example.com&action=delete"
+
+        class ApiHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                request_paths.append(self.path)
+                body = (
+                    json.dumps(
+                        {"items": [], "next_page_token": pagination_token},
+                        separators=(",", ":"),
+                    ).encode()
+                    if len(request_paths) == 1
+                    else b'{"items":[]}'
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ApiHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(
+                circleci_api,
+                "API_ROOT",
+                f"http://127.0.0.1:{server.server_port}",
+            ):
+                client = Client("operator-token")
+                self.assertEqual(
+                    client.fetch_pages(f"project/{circleci_api.PROJECT_SLUG}/pipeline"),
+                    [],
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        endpoint = f"/project/{circleci_api.PROJECT_SLUG}/pipeline"
+        self.assertEqual(
+            request_paths,
+            [
+                endpoint,
+                endpoint
+                + "?page-token=..%2Fadmin%3Ftarget%3Dexample.com%26action%3Ddelete",
+            ],
+        )
 
 
 class CircleCIReleaseStatusTests(unittest.TestCase):

@@ -78,12 +78,14 @@ class CircleCiReleaseContextTests(unittest.TestCase):
                     }
                 raise AssertionError(path)
 
-            def fetch_pages(self, path: str) -> list[dict[str, object]]:
-                if path == f"context?owner-id={ORGANIZATION_ID}":
+            def fetch_pages(
+                self, path: str, *, query: dict[str, str] | None = None
+            ) -> list[dict[str, object]]:
+                if path == "context" and query == {"owner-id": ORGANIZATION_ID}:
                     return [{"id": CONTEXT_ID, "name": "orb-publishing"}]
-                if path == f"context/{CONTEXT_ID}/restrictions":
+                if path == f"context/{CONTEXT_ID}/restrictions" and query is None:
                     return restrictions()
-                raise AssertionError(path)
+                raise AssertionError((path, query))
 
         with patch.object(verifier, "Client", FakeClient):
             self.assertEqual(

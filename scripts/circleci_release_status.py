@@ -14,10 +14,9 @@ from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from circleci_api import CircleCIError, Client, fail, require_uuid
+from circleci_api import CircleCIError, Client, PROJECT_SLUG, fail, require_uuid
 
 
-PROJECT_SLUG = "gh/vexcalibur-dev/vexcalibur-orb"
 TAG_PATTERN = re.compile(r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
 TERMINAL_STATUSES = {
     "canceled",
