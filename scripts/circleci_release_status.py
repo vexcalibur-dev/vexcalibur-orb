@@ -186,7 +186,7 @@ def wait_for_workflow(
     timeout: int,
     poll_interval: int,
 ) -> str:
-    require_uuid(workflow_id, label="CircleCI workflow ID")
+    workflow_id = require_uuid(workflow_id, label="CircleCI workflow ID")
     if timeout < 1 or poll_interval < 1 or poll_interval > timeout:
         fail("workflow timeout and poll interval must be positive and ordered")
     deadline = time.monotonic() + timeout
@@ -207,7 +207,7 @@ def wait_for_workflow(
 
 
 def rerun_workflow(client: Client, *, workflow_id: str) -> str:
-    require_uuid(workflow_id, label="CircleCI workflow ID")
+    workflow_id = require_uuid(workflow_id, label="CircleCI workflow ID")
     document = client.post_json(
         f"workflow/{workflow_id}/rerun",
         {"from_failed": False},
