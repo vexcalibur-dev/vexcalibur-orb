@@ -8,6 +8,7 @@ import re
 from typing import Any, NoReturn
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import UUID
 
 
 API_ROOT = "https://circleci.com/api/v2"
@@ -80,9 +81,15 @@ def fail(message: str) -> NoReturn:
 
 
 def require_uuid(value: Any, *, label: str) -> str:
-    if not isinstance(value, str) or UUID_PATTERN.fullmatch(value) is None:
+    if not isinstance(value, str):
         fail(f"{label} is not a UUID")
-    return value
+    try:
+        canonical = str(UUID(value))
+    except ValueError:
+        fail(f"{label} is not a UUID")
+    if canonical != value or UUID_PATTERN.fullmatch(canonical) is None:
+        fail(f"{label} is not a canonical UUID")
+    return canonical
 
 
 def _reject_constant(value: str) -> NoReturn:

@@ -261,10 +261,12 @@ class CircleCIJsonTests(unittest.TestCase):
         self.assertEqual(
             circleci_api.require_uuid(WORKFLOW_1, label="workflow"), WORKFLOW_1
         )
-        for value in (WORKFLOW_1.upper(), f"{{{WORKFLOW_1}}}", "not-a-uuid"):
+        for value in (WORKFLOW_1.upper(), f"{{{WORKFLOW_1}}}"):
             with self.subTest(value=value):
-                with self.assertRaisesRegex(CircleCIError, "not a UUID"):
+                with self.assertRaisesRegex(CircleCIError, "not a canonical UUID"):
                     circleci_api.require_uuid(value, label="workflow")
+        with self.assertRaisesRegex(CircleCIError, "not a UUID"):
+            circleci_api.require_uuid("not-a-uuid", label="workflow")
 
     def test_pagination_tokens_cannot_change_the_authorized_endpoint(self) -> None:
         request_paths: list[str] = []
