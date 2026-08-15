@@ -1,0 +1,551 @@
+---
+name: Release
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact main commit expected to run the release tooling.
+        required: true
+        type: string
+      tag:
+        description: >-
+          First vMAJOR.MINOR.PATCH tag, or an existing tag to recover.
+        required: false
+        type: string
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve release candidate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.release.outputs.operation }}
+      tag: ${{ steps.release.outputs.tag }}
+      previous_tag: ${{ steps.release.outputs.previous_tag }}
+      bump: ${{ steps.release.outputs.bump }}
+      sha: ${{ steps.release.outputs.sha }}
+      notes_format: ${{ steps.release.outputs.notes_format }}
+      expected_notes_sha256: >-
+        ${{ steps.release.outputs.expected_notes_sha256 }}
+      expected_tag_graph_sha256: >-
+        ${{ steps.release.outputs.expected_tag_graph_sha256 }}
+      make_latest: ${{ steps.release.outputs.make_latest }}
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require current main tip
+        env:
+          EXPECTED_SOURCE_SHA: >-
+            ${{ github.event.inputs.expected_source_sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          current_main_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+          python -I scripts/release.py verify-source \
+            --expected-source "${EXPECTED_SOURCE_SHA}" \
+            --workflow-source "${GITHUB_SHA}" \
+            --current-main "${current_main_sha}"
+
+      - name: Set up Python
+        # actions/setup-python v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14.5"
+
+      - name: Determine release tag
+        id: release
+        env:
+          MANUAL_TAG: ${{ github.event.inputs.tag || '' }}
+        run: >-
+          python -I scripts/release.py plan
+          --tag "${MANUAL_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Stop on skipped release
+        if: steps.release.outputs.operation == 'skip'
+        env:
+          REASON: ${{ steps.release.outputs.reason }}
+        run: echo "Release skipped:${REASON:+ ${REASON}}"
+
+  wait-for-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    needs: resolve
+    if: needs.resolve.outputs.operation != 'skip'
+    steps:
+      - name: Wait for tooling and release CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          TOOLING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          wait_for_ci() {
+            local sha="$1"
+            local role="$2"
+            local run_json
+            local decision
+
+            for _ in {1..90}; do
+              run_json="$(
+                gh run list \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --workflow ci.yml \
+                  --commit "${sha}" \
+                  --json conclusion,databaseId,status,url \
+                  --limit 1000
+              )"
+              if [[ "${run_json}" == "[]" ]]; then
+                echo "Waiting for ${role} CI run for ${sha}."
+                sleep 10
+                continue
+              fi
+
+              decision="$(
+                python -c '
+          import json
+          import sys
+
+          runs = json.load(sys.stdin)
+          if any(
+              run["status"] == "completed" and run["conclusion"] == "success"
+              for run in runs
+          ):
+              print("success")
+          elif any(run["status"] != "completed" for run in runs):
+              print("waiting")
+          else:
+              print("failure")
+          ' <<< "${run_json}"
+              )"
+              if [[ "${decision}" == "success" ]]; then
+                echo "A retained ${role} CI run passed for ${sha}."
+                return 0
+              fi
+              if [[ "${decision}" == "waiting" ]]; then
+                echo "Waiting for ${role} CI run for ${sha} to finish."
+                sleep 10
+                continue
+              fi
+              echo "No retained ${role} CI run passed for ${sha}." >&2
+              return 1
+            done
+
+            echo "Timed out waiting for ${role} CI to pass for ${sha}." >&2
+            return 1
+          }
+
+          wait_for_ci "${TOOLING_SHA}" "release-tooling"
+          if [[ "${RELEASE_SHA}" != "${TOOLING_SHA}" ]]; then
+            wait_for_ci "${RELEASE_SHA}" "release-target"
+          fi
+
+  prepare-release-notes:
+    name: Prepare release notes
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - wait-for-ci
+    if: needs.resolve.outputs.operation != 'skip'
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
+      notes_sha256: ${{ steps.notes.outputs.sha256 }}
+    steps:
+      - name: Checkout release tooling
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Generate and inspect release notes
+        id: notes
+        env:
+          EXPECTED_NOTES_SHA256: >-
+            ${{ needs.resolve.outputs.expected_notes_sha256 }}
+          NOTES_FORMAT: ${{ needs.resolve.outputs.notes_format }}
+          PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          notes_dir="${RUNNER_TEMP}/generated-release-notes"
+          notes_path="${notes_dir}/release-notes.md"
+          mkdir -p "${notes_dir}"
+          python -I scripts/release.py render-notes \
+            --tag "${RELEASE_TAG}" \
+            --commit "${RELEASE_SHA}" \
+            --previous-tag "${PREVIOUS_TAG}" \
+            --notes-format "${NOTES_FORMAT}" \
+            --output "${notes_path}"
+          test -s "${notes_path}"
+          if grep -En '[[:cntrl:]]' "${notes_path}"; then
+            echo "Release notes contain control characters." >&2
+            exit 1
+          fi
+          notes_sha256="$(sha256sum "${notes_path}" | cut -d ' ' -f1)"
+          if [[ -n "${EXPECTED_NOTES_SHA256}" \
+            && "${notes_sha256}" != "${EXPECTED_NOTES_SHA256}" ]]; then
+            echo "Recovered release notes differ from protected metadata." >&2
+            exit 1
+          fi
+          printf 'sha256=%s\n' "${notes_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Name release-note artifact
+        id: artifact
+        run: |
+          printf 'name=release-notes-%s-%s\n' \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload release notes
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/generated-release-notes/release-notes.md
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - prepare-release-notes
+    if: needs.resolve.outputs.operation != 'skip'
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Download release notes
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.prepare-release-notes.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release-notes
+
+      - name: Verify release-note artifact
+        env:
+          EXPECTED_SHA256: >-
+            ${{ needs.prepare-release-notes.outputs.notes_sha256 }}
+        run: |
+          set -euo pipefail
+
+          notes_path="${RUNNER_TEMP}/release-notes/release-notes.md"
+          if [[ ! "${EXPECTED_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Release-note digest is malformed." >&2
+            exit 1
+          fi
+          actual_sha256="$(sha256sum "${notes_path}" | cut -d ' ' -f1)"
+          if [[ "${actual_sha256}" != "${EXPECTED_SHA256}" ]]; then
+            echo "Release-note artifact digest mismatch." >&2
+            exit 1
+          fi
+
+      - name: Revalidate release candidate
+        env:
+          EXPECTED_BUMP: ${{ needs.resolve.outputs.bump }}
+          EXPECTED_GRAPH: >-
+            ${{ needs.resolve.outputs.expected_tag_graph_sha256 }}
+          EXPECTED_LATEST: ${{ needs.resolve.outputs.make_latest }}
+          EXPECTED_NOTES_FORMAT: ${{ needs.resolve.outputs.notes_format }}
+          EXPECTED_NOTES_SHA256: >-
+            ${{ needs.resolve.outputs.expected_notes_sha256 }}
+          EXPECTED_OPERATION: ${{ needs.resolve.outputs.operation }}
+          EXPECTED_PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+          EXPECTED_TAG: ${{ needs.resolve.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_TAG: ${{ github.event.inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+
+          current_main_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+          if [[ "${current_main_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Main changed while the release was being validated." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${EXPECTED_SHA}" HEAD; then
+            echo "Release commit is not reachable from current main." >&2
+            exit 1
+          fi
+          if [[ "${EXPECTED_OPERATION}" == "publish" \
+            && "${EXPECTED_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "A new release must target the current main commit." >&2
+            exit 1
+          fi
+
+          replanned="${RUNNER_TEMP}/release-plan"
+          python -I scripts/release.py plan \
+            --tag "${MANUAL_TAG}" > "${replanned}"
+          test "$(wc -l < "${replanned}")" -eq 10
+          expected_lines=(
+            "operation=${EXPECTED_OPERATION}"
+            "tag=${EXPECTED_TAG}"
+            "previous_tag=${EXPECTED_PREVIOUS_TAG}"
+            "bump=${EXPECTED_BUMP}"
+            "sha=${EXPECTED_SHA}"
+            "notes_format=${EXPECTED_NOTES_FORMAT}"
+            "expected_notes_sha256=${EXPECTED_NOTES_SHA256}"
+            "expected_tag_graph_sha256=${EXPECTED_GRAPH}"
+            "make_latest=${EXPECTED_LATEST}"
+          )
+          for expected_line in "${expected_lines[@]}"; do
+            grep -Fxq "${expected_line}" "${replanned}"
+          done
+
+      - name: Verify owner-signed release policy
+        run: |
+          set -euo pipefail
+
+          signature="${RUNNER_TEMP}/release-policy.sig"
+          base64 --decode \
+            .github/release-policy/attestation.sig > "${signature}"
+          openssl dgst \
+            -sha256 \
+            -verify .github/release-policy/public-key.pem \
+            -signature "${signature}" \
+            .github/release-policy/attestation.json
+
+      - name: Generate publication token
+        id: publication-token
+        # actions/create-github-app-token v3.2.0
+        uses: >-
+          actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_SECRET }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+          permission-contents: write
+
+      - name: Require enforced immutable releases
+        env:
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          settings="${RUNNER_TEMP}/immutable-release-settings.json"
+          gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" > "${settings}"
+          python -I scripts/release.py verify-immutable-settings \
+            --settings-json "${settings}"
+
+      - name: Require attested append-only release tag rules
+        env:
+          APP_SLUG: ${{ steps.publication-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          immutable_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/rulesets" \
+              --paginate \
+              --jq '.[] | select(.name == "immutable release tags") | .id'
+          )"
+          creation_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/rulesets" \
+              --paginate \
+              --jq '
+                .[]
+                | select(.name == "restricted release tag creation")
+                | .id
+              '
+          )"
+          if [[ ! "${immutable_id}" =~ ^[0-9]+$ \
+            || ! "${creation_id}" =~ ^[0-9]+$ ]]; then
+            echo "Required release tag rulesets are missing or ambiguous." >&2
+            exit 1
+          fi
+
+          policy_dir="${RUNNER_TEMP}/release-policy"
+          mkdir -p "${policy_dir}"
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${immutable_id}" \
+            > "${policy_dir}/immutable.json"
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${creation_id}" \
+            > "${policy_dir}/creation.json"
+          app_id="$(gh api "/apps/${APP_SLUG}" --jq '.id')"
+          python -I scripts/release.py verify-attested-rulesets \
+            --immutable-json "${policy_dir}/immutable.json" \
+            --creation-json "${policy_dir}/creation.json" \
+            --attestation .github/release-policy/attestation.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --app-id "${app_id}"
+
+      - name: Reconcile immutable release tag
+        env:
+          APP_SLUG: ${{ steps.publication-token.outputs.app-slug }}
+          EXPECTED_TAG_GRAPH_SHA256: >-
+            ${{ needs.resolve.outputs.expected_tag_graph_sha256 }}
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+          NOTES_SHA256: ${{ needs.prepare-release-notes.outputs.notes_sha256 }}
+          NOTES_FORMAT: ${{ needs.resolve.outputs.notes_format }}
+          PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          current_main_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+          if [[ "${current_main_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Main changed before release tag publication." >&2
+            exit 1
+          fi
+
+          bot_user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq '.id')"
+          bot_name="${APP_SLUG}[bot]"
+          bot_email="${bot_user_id}+${bot_name}@users.noreply.github.com"
+          git config user.name "${bot_name}"
+          git config user.email "${bot_email}"
+          basic_auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic_auth}"
+          git remote set-url \
+            origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          python -I scripts/release.py reconcile-tag \
+            --remote origin \
+            --expected-main-commit "${GITHUB_SHA}" \
+            --expected-tag-graph-sha256 "${EXPECTED_TAG_GRAPH_SHA256}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${RELEASE_SHA}" \
+            --previous-tag "${PREVIOUS_TAG}" \
+            --notes-format "${NOTES_FORMAT}" \
+            --notes-sha256 "${NOTES_SHA256}" \
+            --expected-tagger-name "${bot_name}" \
+            --expected-tagger-email "${bot_email}"
+
+      - name: Create GitHub Release
+        env:
+          EXPECTED_AUTHOR: ${{ steps.publication-token.outputs.app-slug }}[bot]
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+          MAKE_LATEST: ${{ needs.resolve.outputs.make_latest }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          notes_path="${RUNNER_TEMP}/release-notes/release-notes.md"
+          release_json="${RUNNER_TEMP}/existing-release.json"
+          release_error="${RUNNER_TEMP}/existing-release.err"
+          verify_release() {
+            python -I scripts/release.py verify-release \
+              --release-json "${release_json}" \
+              --notes-file "${notes_path}" \
+              --expected-author "${EXPECTED_AUTHOR}" \
+              --tag "${RELEASE_TAG}" \
+              --commit "${RELEASE_SHA}"
+          }
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "${release_json}" 2> "${release_error}"; then
+            verify_release
+            echo "Release ${RELEASE_TAG} matches protected metadata."
+            exit 0
+          fi
+          if ! grep -Fq "HTTP 404" "${release_error}"; then
+            cat "${release_error}" >&2
+            exit 1
+          fi
+
+          args=(
+            release create "${RELEASE_TAG}"
+            --repo "${GITHUB_REPOSITORY}"
+            --verify-tag
+            --target "${RELEASE_SHA}"
+            --title "${RELEASE_TAG}"
+            --notes-file "${notes_path}"
+          )
+          if [[ "${MAKE_LATEST}" == "true" ]]; then
+            args+=(--latest)
+          elif [[ "${MAKE_LATEST}" == "false" ]]; then
+            args+=(--latest=false)
+          else
+            echo "Invalid latest-release plan: ${MAKE_LATEST}" >&2
+            exit 1
+          fi
+
+          if ! gh "${args[@]}"; then
+            if ! gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+              > "${release_json}"; then
+              echo "Release creation failed and no matching release exists." >&2
+              exit 1
+            fi
+            verify_release
+            echo "A concurrent publisher created the matching GitHub Release."
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "${release_json}"
+          verify_release
+
+      - name: Verify latest-release projection
+        env:
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+          MAKE_LATEST: ${{ needs.resolve.outputs.make_latest }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          latest_error="${RUNNER_TEMP}/latest-release.err"
+          if latest_tag="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+              --jq '.tag_name' 2> "${latest_error}"
+          )"; then
+            if [[ "${MAKE_LATEST}" == "true" \
+              && "${latest_tag}" != "${RELEASE_TAG}" ]]; then
+              echo "The new release was not promoted to latest." >&2
+              exit 1
+            fi
+            if [[ "${MAKE_LATEST}" == "false" \
+              && "${latest_tag}" == "${RELEASE_TAG}" ]]; then
+              echo \
+                "Recovery incorrectly promoted an older release to latest." \
+                >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          if [[ "${MAKE_LATEST}" == "false" \
+            ]] && grep -Fq "HTTP 404" "${latest_error}"; then
+            echo "No GitHub Release is currently marked latest."
+            exit 0
+          fi
+          cat "${latest_error}" >&2
+          exit 1

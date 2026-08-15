@@ -1,3 +1,4 @@
+---
 version: 2.1
 setup: true
 
@@ -8,12 +9,14 @@ orbs:
 executors:
   pinned-circleci-cli:
     docker:
+      # yamllint disable-line rule:line-length
       - image: circleci/circleci-cli:0.1.38646@sha256:2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926
 
 jobs:
   shellcheck:
     docker:
-      - image: cimg/base:2026.07@sha256:6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3 # pragma: allowlist secret
+      # yamllint disable-line rule:line-length
+      - image: cimg/base:2026.07@sha256:6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3  # pragma: allowlist secret
     steps:
       - checkout
       - shellcheck/install:
@@ -23,6 +26,8 @@ jobs:
           command: shellcheck scripts/*.sh src/scripts/*.sh
 
 filters: &filters
+  branches:
+    ignore: release-coordination
   tags:
     only: /.*/
 
