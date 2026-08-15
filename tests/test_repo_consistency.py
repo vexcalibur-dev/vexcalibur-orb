@@ -45,9 +45,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
             name: version
             for name, version in (
                 line.split(maxsplit=1)
-                for line in (REPO_ROOT / ".tool-versions").read_text(
-                    encoding="utf-8"
-                ).splitlines()
+                for line in (REPO_ROOT / ".tool-versions")
+                .read_text(encoding="utf-8")
+                .splitlines()
             )
         }
         with (REPO_ROOT / "mise.toml").open("rb") as stream:
@@ -77,7 +77,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
             for step in ci_workflow["jobs"]["quality"]["steps"]
             if step.get("name") == "Set up Python"
         )
-        self.assertEqual(setup_python["with"]["python-version"], tool_versions["python"])
+        self.assertEqual(
+            setup_python["with"]["python-version"], tool_versions["python"]
+        )
 
         circleci_configuration = yaml.safe_load(
             (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
@@ -86,9 +88,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
             circleci_configuration["jobs"]["shellcheck"]["docker"],
             [
                 {
-                        "image": (
-                            "cimg/base:2026.07@sha256:"
-                            "6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3"  # pragma: allowlist secret
+                    "image": (
+                        "cimg/base:2026.07@sha256:"
+                        "6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3"  # pragma: allowlist secret
                     )
                 }
             ],
@@ -136,11 +138,19 @@ class RepositoryConsistencyTests(unittest.TestCase):
         )
         self.assertNotIn('"version": "0.3.0"', deployment)
 
+    def test_release_coordination_branch_does_not_start_circleci_jobs(self) -> None:
+        configuration = yaml.safe_load(
+            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            configuration["filters"]["branches"]["ignore"],
+            "release-coordination",
+        )
+
     def test_scorecard_workflow_is_pinned_and_least_privilege(self) -> None:
         workflow = yaml.load(
-            (REPO_ROOT / ".github/workflows/scorecard.yml").read_text(
-                encoding="utf-8"
-            ),
+            (REPO_ROOT / ".github/workflows/scorecard.yml").read_text(encoding="utf-8"),
             Loader=yaml.BaseLoader,
         )
         self.assertEqual(workflow["permissions"], "read-all")
@@ -232,7 +242,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertIn("--format\n            cyclonedx", config)
         self.assertIn("--format\n            openvex", config)
         self.assertIn("--format\n            csaf", config)
-        self.assertIn("--csaf-document-id\n            VEXCALIBUR-ORB-ACCEPTANCE", config)
+        self.assertIn(
+            "--csaf-document-id\n            VEXCALIBUR-ORB-ACCEPTANCE", config
+        )
         self.assertIn(
             "--output\n            artifacts/acceptance/vexcalibur-orb-acceptance.json",
             config,
@@ -274,7 +286,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertNotIn("raw.githubusercontent.com/CircleCI-Public/circleci-cli", workflow)
+        self.assertNotIn(
+            "raw.githubusercontent.com/CircleCI-Public/circleci-cli", workflow
+        )
         self.assertIn("scripts/install-circleci-cli.sh", workflow)
         self.assertIn("scripts/validate-circleci.sh", workflow)
         self.assertIn(
@@ -284,7 +298,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertNotIn("install.sh", installer)
 
         version_match = re.search(r'CIRCLECI_CLI_VERSION: "([0-9.]+)"', workflow)
-        checksum_match = re.search(r'CIRCLECI_CLI_CHECKSUMS_SHA256: "([0-9a-f]+)"', workflow)
+        checksum_match = re.search(
+            r'CIRCLECI_CLI_CHECKSUMS_SHA256: "([0-9a-f]+)"', workflow
+        )
         if version_match is None or checksum_match is None:
             self.fail("CircleCI CLI version and checksum pins must both be present")
         self.assertTrue(CIRCLECI_CLI_VERSION_PATTERN.fullmatch(version_match.group(1)))
@@ -317,9 +333,7 @@ class RepositoryConsistencyTests(unittest.TestCase):
             {
                 ".circleci/config.yml:orb-tools": "circleci/orb-tools@12.3.3",
                 ".circleci/config.yml:shellcheck": "circleci/shellcheck@3.2.0",
-                ".circleci/test-deploy.yml:orb-tools": (
-                    "circleci/orb-tools@12.3.3"
-                ),
+                ".circleci/test-deploy.yml:orb-tools": ("circleci/orb-tools@12.3.3"),
             },
         )
         self.assertEqual(
@@ -381,20 +395,37 @@ class RepositoryConsistencyTests(unittest.TestCase):
                 },
             )
 
-        for name in ("publish-dev", "publish-release"):
-            orb_job, parameters = named_invocation(name)
-            self.assertEqual(orb_job, "orb-tools/publish")
-            self.assertEqual(parameters["executor"], "pinned-circleci-cli")
-            self.assertFalse(parameters["attach_workspace"])
-            self.assertFalse(parameters["enable_pr_comment"])
-            self.assertEqual(parameters["context"], "orb-publishing")
-            self.assertEqual(
-                parameters["pre-steps"],
-                [
-                    {"attach_workspace": {"at": "dist"}},
-                    "verify-packed-orb",
-                ],
-            )
+        orb_job, parameters = named_invocation("publish-dev")
+        self.assertEqual(orb_job, "orb-tools/publish")
+        self.assertEqual(parameters["executor"], "pinned-circleci-cli")
+        self.assertFalse(parameters["attach_workspace"])
+        self.assertFalse(parameters["enable_pr_comment"])
+        self.assertEqual(parameters["context"], "orb-publishing")
+        self.assertEqual(
+            parameters["pre-steps"],
+            [
+                {"attach_workspace": {"at": "dist"}},
+                "verify-packed-orb",
+            ],
+        )
+
+        orb_job, parameters = named_invocation("publish-release")
+        self.assertEqual(orb_job, "publish-production-orb")
+        self.assertEqual(parameters["context"], "orb-publishing")
+        release_job = deployment["jobs"]["publish-production-orb"]
+        self.assertEqual(release_job["executor"], "pinned-circleci-cli")
+        self.assertEqual(
+            release_job["steps"][:3],
+            [
+                "checkout",
+                {"attach_workspace": {"at": "dist"}},
+                "verify-packed-orb",
+            ],
+        )
+        self.assertEqual(
+            release_job["steps"][3]["run"]["command"],
+            "scripts/publish-production-orb.sh",
+        )
 
 
 if __name__ == "__main__":

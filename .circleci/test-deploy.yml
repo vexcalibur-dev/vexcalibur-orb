@@ -1,3 +1,4 @@
+---
 version: 2.1
 
 orbs:
@@ -7,6 +8,7 @@ orbs:
 executors:
   pinned-circleci-cli:
     docker:
+      # yamllint disable-line rule:line-length
       - image: circleci/circleci-cli:0.1.38646@sha256:2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926
 
 commands:
@@ -20,13 +22,17 @@ commands:
             checksum_path=dist/orb.yml.sha256
 
             if [[ ! -f "$orb_path" || -L "$orb_path" ]]; then
-              printf 'Packed orb must be a regular, non-symlink file: %s\n' "$orb_path" >&2
+              printf \
+                'Packed orb must be a regular, non-symlink file: %s\n' \
+                "$orb_path" >&2
               exit 1
             fi
 
             read -r digest _ < <(sha256sum -- "$orb_path")
             if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-              printf 'sha256sum returned an invalid digest for %s\n' "$orb_path" >&2
+              printf \
+                'sha256sum returned an invalid digest for %s\n' \
+                "$orb_path" >&2
               exit 1
             fi
 
@@ -51,17 +57,23 @@ commands:
             checksum_path=dist/orb.yml.sha256
 
             if [[ ! -f "$orb_path" || -L "$orb_path" ]]; then
-              printf 'Packed orb must be a regular, non-symlink file: %s\n' "$orb_path" >&2
+              printf \
+                'Packed orb must be a regular, non-symlink file: %s\n' \
+                "$orb_path" >&2
               exit 1
             fi
             if [[ ! -f "$checksum_path" || -L "$checksum_path" ]]; then
-              printf 'Checksum must be a regular, non-symlink file: %s\n' "$checksum_path" >&2
+              printf \
+                'Checksum must be a regular, non-symlink file: %s\n' \
+                "$checksum_path" >&2
               exit 1
             fi
 
             mapfile -t checksum_lines < "$checksum_path"
             if (( ${#checksum_lines[@]} != 1 )); then
-              printf 'Checksum manifest must contain exactly one line: %s\n' "$checksum_path" >&2
+              printf \
+                'Checksum manifest must contain exactly one line: %s\n' \
+                "$checksum_path" >&2
               exit 1
             fi
 
@@ -78,8 +90,11 @@ commands:
 
             read -r actual_digest _ < <(sha256sum -- "$orb_path")
             if [[ "$actual_digest" != "$expected_digest" ]]; then
-              printf 'Packed orb SHA-256 does not match the credentialless pack result\n' >&2
-              printf 'Expected: %s\nActual:   %s\n' "$expected_digest" "$actual_digest" >&2
+              printf \
+                'Packed orb SHA-256 does not match the pack result\n' >&2
+              printf \
+                'Expected: %s\nActual:   %s\n' \
+                "$expected_digest" "$actual_digest" >&2
               exit 1
             fi
 
@@ -102,6 +117,17 @@ dev-publish-filters: &dev-publish-filters
     ignore: /.*/
 
 jobs:
+  publish-production-orb:
+    executor: pinned-circleci-cli
+    steps:
+      - checkout
+      - attach_workspace:
+          at: dist
+      - verify-packed-orb
+      - run:
+          name: Publish or verify production orb
+          command: scripts/publish-production-orb.sh
+
   command-help-test:
     docker:
       - image: cimg/python:3.14.1
@@ -182,7 +208,9 @@ jobs:
             from pathlib import Path
 
             artifact_dir = Path("artifacts/acceptance")
-            cyclonedx = json.loads((artifact_dir / "cyclonedx.json").read_text())
+            cyclonedx = json.loads(
+                (artifact_dir / "cyclonedx.json").read_text()
+            )
             openvex = json.loads((artifact_dir / "openvex.json").read_text())
             csaf = json.loads(
                 (artifact_dir / "vexcalibur-orb-acceptance.json").read_text()
@@ -323,19 +351,9 @@ workflows:
           filters: *release-filters
       - release-source-check:
           filters: *release-filters
-      - orb-tools/publish:
+      - publish-production-orb:
           name: publish-release
-          executor: pinned-circleci-cli
-          attach_workspace: false
-          orb_name: vexcalibur-dev/vexcalibur
-          vcs_type: github
-          pub_type: production
-          enable_pr_comment: false
           context: orb-publishing
-          pre-steps:
-            - attach_workspace:
-                at: dist
-            - verify-packed-orb
           requires:
             - pack-release
             - command-help-test

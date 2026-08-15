@@ -108,17 +108,29 @@ for job_name in ("pack-dev", "pack-release"):
     if "Record packed orb SHA-256" not in names:
         raise SystemExit(f"{job_name} did not retain the checksum-recording step")
 
-for job_name in ("publish-dev", "publish-release"):
-    job = deployment_jobs[job_name]
-    require_pinned_executor(job_name, job)
-    names = run_step_names(job)
-    try:
-        verify_index = names.index("Verify packed orb SHA-256")
-        publish_index = names.index("Publishing Orb Release")
-    except ValueError as error:
-        raise SystemExit(f"{job_name} is missing an integrity or publish step") from error
-    if verify_index >= publish_index:
-        raise SystemExit(f"{job_name} publishes before verifying the packed orb")
+publish_dev_job = deployment_jobs["publish-dev"]
+require_pinned_executor("publish-dev", publish_dev_job)
+publish_dev_names = run_step_names(publish_dev_job)
+try:
+    verify_index = publish_dev_names.index("Verify packed orb SHA-256")
+    publish_index = publish_dev_names.index("Publishing Orb Release")
+except ValueError as error:
+    raise SystemExit("publish-dev is missing an integrity or publish step") from error
+if verify_index >= publish_index:
+    raise SystemExit("publish-dev publishes before verifying the packed orb")
+
+publish_release_job = deployment_jobs["publish-release"]
+require_pinned_executor("publish-release", publish_release_job)
+publish_release_names = run_step_names(publish_release_job)
+try:
+    verify_index = publish_release_names.index("Verify packed orb SHA-256")
+    publish_index = publish_release_names.index("Publish or verify production orb")
+except ValueError as error:
+    raise SystemExit(
+        "publish-release is missing an integrity or idempotent publish step"
+    ) from error
+if verify_index >= publish_index:
+    raise SystemExit("publish-release publishes before verifying the packed orb")
 
 test_deploy = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
 workflow_jobs = test_deploy.get("workflows", {}).get("test-deploy", {}).get("jobs", [])
@@ -158,4 +170,34 @@ if filters.get("branches", {}).get("only") != "main":
     raise SystemExit("publish-dev must run only from main")
 if filters.get("tags", {}).get("ignore") != "/.*/":
     raise SystemExit("publish-dev must not run from tags")
+
+publish_release = next(
+    (
+        job["publish-production-orb"]
+        for job in workflow_jobs
+        if isinstance(job, dict)
+        and isinstance(job.get("publish-production-orb"), dict)
+        and job["publish-production-orb"].get("name") == "publish-release"
+    ),
+    None,
+)
+if not isinstance(publish_release, dict):
+    raise SystemExit("test-deploy workflow has no idempotent publish-release job")
+if publish_release.get("context") != "orb-publishing":
+    raise SystemExit("publish-release must use the restricted orb-publishing context")
+if set(publish_release.get("requires", [])) != {
+    "pack-release",
+    "command-help-test",
+    "format-output-test",
+    "job-help-test",
+    "release-source-check",
+}:
+    raise SystemExit("publish-release must require every credentialless release check")
+release_filters = publish_release.get("filters", {})
+if release_filters.get("branches", {}).get("ignore") != "/.*/":
+    raise SystemExit("publish-release must ignore every branch")
+if release_filters.get("tags", {}).get("only") != (
+    "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
+):
+    raise SystemExit("publish-release must require an exact production tag")
 PY
