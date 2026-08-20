@@ -40,7 +40,7 @@ workflows:
           executor: pinned-circleci-cli
           filters: *filters
       - orb-tools/review:
-          orb_name: vexcalibur-dev/vexcalibur
+          orb_name: vexcalibur
           filters: *filters
       - shellcheck:
           filters: *filters

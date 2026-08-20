@@ -17,8 +17,10 @@ inspect the interface, not as a production pin. Do not import a development
 orb into a project that has environment variables, contexts, private source,
 or other credentials.
 
-No production orb has been published. `vexcalibur-dev/vexcalibur@0.1.0` cannot
-be resolved until the first production release exists.
+The immutable GitHub release `v0.1.0` failed its production-only CircleCI
+review before publication, so no `0.1.0` orb exists in the registry. The fix
+will publish `vexcalibur-dev/vexcalibur@0.1.1`; that reference won't resolve
+until the release pipeline succeeds.
 
 The public release will be a community orb. A CircleCI organization administrator must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before that organization can import it.
 
@@ -52,7 +54,7 @@ The repository includes four templates for the intended production release:
 - [Generate and preserve CSAF 2.0 VEX from local findings](src/examples/generate_csaf.yml)
 - [Query public OSV with an approved package inventory](src/examples/query_public_osv.yml)
 
-These source files import the pending `0.1.0` production version, so they
+These source files import the pending `0.1.1` production version, so they
 cannot run from the registry yet.
 
 Every nonempty line in `args` becomes one command-line argument. Write flags and their values on separate lines. The orb does not split a line on spaces or evaluate it as shell code.

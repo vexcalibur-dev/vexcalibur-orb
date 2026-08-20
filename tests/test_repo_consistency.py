@@ -24,6 +24,7 @@ CIRCLECI_CLI_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 EXACT_ORB_REFERENCE_PATTERN = re.compile(
     r"^[a-z0-9_.-]+/[a-z0-9_.-]+@[0-9]+\.[0-9]+\.[0-9]+$"
 )
+PLANNED_PRODUCTION_ORB_REFERENCE = "vexcalibur-dev/vexcalibur@0.1.1"
 PINNED_CIRCLECI_CLI_IMAGE = (
     "circleci/circleci-cli:0.1.38646@sha256:"
     "2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926"  # pragma: allowlist secret
@@ -147,6 +148,31 @@ class RepositoryConsistencyTests(unittest.TestCase):
             configuration["filters"]["branches"]["ignore"],
             "release-coordination",
         )
+
+    def test_orb_review_uses_the_local_example_key(self) -> None:
+        configuration = yaml.safe_load(
+            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
+        )
+        review = next(
+            job["orb-tools/review"]
+            for job in configuration["workflows"]["lint-pack"]["jobs"]
+            if isinstance(job, dict) and "orb-tools/review" in job
+        )
+
+        orb_name = review["orb_name"]
+        self.assertEqual(orb_name, "vexcalibur")
+
+        for example_path in sorted((REPO_ROOT / "src/examples").glob("*.yml")):
+            with self.subTest(example=example_path.name):
+                example = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+                self.assertIn(orb_name, example["usage"]["orbs"])
+
+    def test_examples_use_the_planned_production_orb(self) -> None:
+        for example_path in sorted((REPO_ROOT / "src/examples").glob("*.yml")):
+            with self.subTest(example=example_path.name):
+                example = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+                reference = example["usage"]["orbs"]["vexcalibur"]
+                self.assertEqual(reference, PLANNED_PRODUCTION_ORB_REFERENCE)
 
     def test_scorecard_workflow_is_pinned_and_least_privilege(self) -> None:
         workflow = yaml.load(

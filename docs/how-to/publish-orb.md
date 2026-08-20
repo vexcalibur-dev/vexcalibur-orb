@@ -4,7 +4,7 @@ This guide is for Vexcalibur maintainers who can administer the CircleCI organiz
 
 The GitHub release setup is complete. GitHub enforces immutable releases, restricts release-tag creation to the Vexcalibur automation App, and prevents every actor from updating or deleting a release tag. The CircleCI setup is ready only when the verifier in step 10 passes. The [production release policy](../reference/release-policy.md) records the exact GitHub controls and signed owner evidence.
 
-A production orb version is immutable. Complete the development publication and verification before you dispatch the first release. The automation creates the tag; maintainers don't create release-looking tags by hand.
+A production orb version is immutable. Complete the development publication and verification before you publish a production version. The automation creates the tag; maintainers don't create release-looking tags by hand.
 
 The `orb-publishing` context must keep the `vexcalibur-orb` project as its sole
 authorization grant. Do not add `All members` or another security group.
@@ -21,6 +21,8 @@ You need:
 - Repository admin access when you recover a GitHub webhook delivery
 - A CircleCI personal API token owned by an identity that can publish the Vexcalibur namespace
 - Permission to create a restricted CircleCI context
+- Bash 4 or newer for the manual release watcher
+- A current GitHub CLI that supports the `gh run list --created` filter
 - The [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/) for local checks and registry verification
 - A separate [CircleCI personal API token](https://circleci.com/docs/guides/toolkit/managing-api-tokens/) for monitoring or rerunning a failed hosted workflow
 
@@ -230,83 +232,13 @@ flowchart LR
     test --> registry[Publish immutable orb version]
 ```
 
-Don't create, move, replace, or delete a release-looking tag. A failed release is recovered from the existing tag; a released defect gets a new version.
+Don't create, move, replace, or delete a release-looking tag. Retry a transient failure from the existing tag. Fix a source defect on `main`, then publish a new version.
 
 The workflow checks live `main` again immediately before publication. That observation establishes the release order: a `main` push accepted afterward is a later candidate and starts its own serialized release run. The tag and `release-coordination` branch update are one atomic Git transaction.
 
 The internal `release-coordination` branch serializes release-tag creation. It points to a synthetic commit that records the latest tag object and its source commit. Different tags produce different coordination commits, so Git checks the branch lease even when two attempts target the same source. It is mutable coordination state, not a release version. CircleCI ignores pushes to that branch. Don't edit it. Existing-tag recovery reconstructs a missing branch from the verified immutable tag graph, but stops on a conflicting value.
 
-### Dispatch the first release
-
-Use this procedure once, when no production tag exists. Run it with Bash 4 or newer from a clean checkout of `vexcalibur-dev/vexcalibur-orb`. The commands require a current GitHub CLI that supports the `gh run list --created` filter, authenticated as a maintainer.
-
-1. Update the local `main` branch and confirm that no release tag exists:
-
-   ```bash
-   git fetch --prune --tags origin
-   git switch main
-   git pull --ff-only origin main
-   test -z "$(git tag --list 'v*' | awk 'index($0, "/") == 0')"
-   RELEASE_SHA="$(git rev-parse HEAD)"
-   ```
-
-   The `test` command produces no output when this is the first release. It ignores names such as `v/unprotected` because the release rules don't cover tags that contain `/`. Stop if the command returns a nonzero status; use the recovery procedure for an existing production tag.
-
-2. Dispatch the planned first version:
-
-   ```bash
-   RELEASE_TAG=v0.1.0
-   TOOLING_SHA="${RELEASE_SHA}"
-   DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-   RUN_URL="$(gh workflow run release.yml \
-     --repo vexcalibur-dev/vexcalibur-orb \
-     --ref main \
-     --field expected_source_sha="${RELEASE_SHA}" \
-     --field tag="${RELEASE_TAG}")"
-   ```
-
-   An explicit new tag is accepted only when the repository has no production tags. The expected source input makes the workflow stop if `main` moves between the local fetch and the dispatch. Later versions come from Conventional Commits.
-
-3. Resolve the exact manual run and wait for it:
-
-   ```bash
-   RUN_ID=""
-   if [[ "${RUN_URL}" =~ /actions/runs/([0-9]+)(\?.*)?$ ]]; then
-     RUN_ID="${BASH_REMATCH[1]}"
-   else
-     for _attempt in {1..12}; do
-       mapfile -t matching_runs < <(
-         gh run list \
-           --repo vexcalibur-dev/vexcalibur-orb \
-           --workflow release.yml \
-           --event workflow_dispatch \
-           --commit "${TOOLING_SHA}" \
-           --created ">=${DISPATCHED_AT}" \
-           --json databaseId \
-           --limit 20 \
-           --jq '.[].databaseId'
-       )
-       if (( ${#matching_runs[@]} == 1 )); then
-         RUN_ID="${matching_runs[0]}"
-         break
-       fi
-       if (( ${#matching_runs[@]} > 1 )); then
-         echo "More than one matching manual release run was found." >&2
-         exit 1
-       fi
-       sleep 5
-     done
-   fi
-   [[ "${RUN_ID}" =~ ^[0-9]+$ ]]
-   gh run watch \
-     --repo vexcalibur-dev/vexcalibur-orb \
-     --exit-status \
-     "${RUN_ID}"
-   ```
-
-   The event, commit, dispatch time, and returned URL prevent the automatic push run for the same commit from being mistaken for this manual run. Success means every `Release` job completed. It also means the tag and immutable GitHub Release match the planned source, but the CircleCI registry publication can still be running.
-
-### Release later versions
+### Release production versions
 
 After the first release, each push to `main` recalculates the next version from commits after the latest production tag. The highest matching change controls the bump:
 
@@ -326,20 +258,71 @@ TOOLING_SHA="$(
   gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
     --jq '.object.sha'
 )"
-gh workflow run release.yml \
+DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_URL="$(gh workflow run release.yml \
   --repo vexcalibur-dev/vexcalibur-orb \
   --ref main \
-  --field expected_source_sha="${TOOLING_SHA}"
+  --field expected_source_sha="${TOOLING_SHA}")"
 ```
+
+### Watch a manual release dispatch
+
+The preceding command records the dispatch time and captures the URL returned by `gh workflow run`. Resolve and watch that exact run:
+
+```bash
+RUN_ID=""
+if [[ "${RUN_URL}" =~ /actions/runs/([0-9]+)(\?.*)?$ ]]; then
+  RUN_ID="${BASH_REMATCH[1]}"
+else
+  for _attempt in {1..12}; do
+    mapfile -t matching_runs < <(
+      gh run list \
+        --repo vexcalibur-dev/vexcalibur-orb \
+        --workflow release.yml \
+        --event workflow_dispatch \
+        --commit "${TOOLING_SHA}" \
+        --created ">=${DISPATCHED_AT}" \
+        --json databaseId \
+        --limit 20 \
+        --jq '.[].databaseId'
+    )
+    if (( ${#matching_runs[@]} == 1 )); then
+      RUN_ID="${matching_runs[0]}"
+      break
+    fi
+    if (( ${#matching_runs[@]} > 1 )); then
+      echo "More than one matching manual release run was found." >&2
+      exit 1
+    fi
+    sleep 5
+  done
+fi
+[[ "${RUN_ID}" =~ ^[0-9]+$ ]]
+gh run watch \
+  --repo vexcalibur-dev/vexcalibur-orb \
+  --exit-status \
+  "${RUN_ID}"
+test "$(
+  gh run view \
+    --repo vexcalibur-dev/vexcalibur-orb \
+    --json jobs \
+    --jq '.jobs[] | select(.name == "Publish GitHub Release") | .conclusion' \
+    "${RUN_ID}"
+)" = success
+```
+
+The event, commit, dispatch time, and returned URL distinguish this run from an automatic push run for the same commit. The final check rejects a successful workflow that skipped publication because no releasable commit was present. CircleCI registry publication may still be running.
 
 ### Verify GitHub and CircleCI publication
 
-Keep `RELEASE_TAG` and `RELEASE_SHA` from the dispatch procedure. For an automatic release, resolve both values from the latest immutable GitHub Release:
+After the GitHub release workflow succeeds, set `EXPECTED_RELEASE_SHA` to the candidate source commit. Use `TOOLING_SHA` for a normal manual dispatch. For recovery, keep `RELEASE_TAG` set to the recovered tag and use its existing immutable target as `EXPECTED_RELEASE_SHA`. When `RELEASE_TAG` is unset, the commands resolve it from the latest immutable GitHub Release:
 
 ```bash
-RELEASE_TAG="$(
-  gh api repos/vexcalibur-dev/vexcalibur-orb/releases/latest --jq '.tag_name'
-)"
+if [[ -z "${RELEASE_TAG:-}" ]]; then
+  RELEASE_TAG="$(
+    gh api repos/vexcalibur-dev/vexcalibur-orb/releases/latest --jq '.tag_name'
+  )"
+fi
 TAG_OBJECT_SHA="$(
   gh api "repos/vexcalibur-dev/vexcalibur-orb/git/ref/tags/${RELEASE_TAG}" \
     --jq '.object.sha'
@@ -348,6 +331,7 @@ RELEASE_SHA="$(
   gh api "repos/vexcalibur-dev/vexcalibur-orb/git/tags/${TAG_OBJECT_SHA}" \
     --jq '.object.sha'
 )"
+test "${RELEASE_SHA}" = "${EXPECTED_RELEASE_SHA:?set the expected source commit}"
 ```
 
 The remaining commands require `gh`, the CircleCI CLI, and a personal CircleCI API token exported as `CIRCLECI_OPERATOR_TOKEN`. Do not use the `CIRCLE_TOKEN` value from the publishing context.
@@ -453,7 +437,7 @@ RUN_URL="$(gh workflow run release.yml \
   --field tag="${RELEASE_TAG}")"
 ```
 
-Resolve and watch this dispatch with step 3 under [Dispatch the first release](#dispatch-the-first-release). Keep `TOOLING_SHA`, `DISPATCHED_AT`, and `RUN_URL` from the recovery command; the run's tooling commit is current `main`, while the recovered release commit remains the immutable tag target.
+Resolve and watch this dispatch with [Watch a manual release dispatch](#watch-a-manual-release-dispatch). Keep `TOOLING_SHA`, `DISPATCHED_AT`, and `RUN_URL` from the recovery command; the run's tooling commit is current `main`, while the recovered release commit remains the immutable tag target.
 
 The workflow reads that tag target and verifies its annotation before it recreates missing release metadata. The annotation records the predecessor, release-note format, and note digest, so recovery does not silently rewrite an older release. The workflow stops if the existing tag or GitHub Release conflicts with the expected commit, author, notes, or immutable state.
 
@@ -512,7 +496,9 @@ The push payload's [`after` field](https://docs.github.com/en/webhooks/webhook-e
 
 GitHub [retains webhook deliveries for three days](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks). If the exact delivery is missing or too old to redeliver, stop: don't move the tag or start CircleCI with API-supplied configuration. Repair the webhook, commit the fix with a patch-level Conventional Commit, and let the next immutable version publish from `main`. This preserves the failed tag as source history instead of pretending its registry version exists.
 
-Use the CircleCI recovery path when the GitHub tag and Release are correct but the newest CircleCI tag workflow attempt failed. Rerun the original `test-deploy` workflow, not a later attempt. CircleCI can preserve SSH access when you rerun an SSH-derived workflow, which the publishing context correctly rejects. A full rerun of the original workflow re-establishes the evidence for every required test and publication job in one attempt.
+Use the CircleCI recovery path only when the GitHub tag and Release are correct and a transient failure interrupted the newest CircleCI tag workflow. A source or configuration defect cannot be repaired within an immutable tag. Fix that defect on `main` with a patch-level Conventional Commit and let the release workflow publish the next version.
+
+For a transient failure, rerun the original `test-deploy` workflow, not a later attempt. CircleCI can preserve SSH access when you rerun an SSH-derived workflow, which the publishing context correctly rejects. A full rerun of the original workflow re-establishes the evidence for every required test and publication job in one attempt.
 
 The production job checks the registry before it publishes. If the version already exists, the job succeeds only when its registry source matches the packed release, allowing recovery after a lost publish response or duplicate webhook. A mismatch stops the job because a production orb version cannot be replaced.
 
@@ -542,13 +528,13 @@ unset CIRCLECI_OPERATOR_TOKEN
 
 There is no rollback that mutates a published version. If the registry contains a bad orb, fix the source on `main` with a releasable Conventional Commit and publish the next version.
 
-### Complete the first-release documentation
+### Complete the first registry release documentation
 
-After `v0.1.0` passes both verification procedures, update these public entrypoints in one follow-up pull request:
+After the first registry version passes both verification procedures, update these public entrypoints in one follow-up pull request:
 
 - Replace the pending production status in `README.md` with the verified registry reference.
 - Replace the pending release row in `SECURITY.md` with the supported version.
-- Replace the intended-version language in `docs/reference/orb.md` with the published version and tested support contract.
+- Replace the planned-version language in `docs/reference/orb.md` with the published version and tested support contract.
 - Link the GitHub Release and CircleCI registry entry where each helps the reader verify provenance.
 
 Run `python -m unittest discover -s tests` and `scripts/validate-circleci.sh`, then apply the Green Thumb prose pass and Scorched Earth documentation review before merging that follow-up. This repository does not generate a documentation site or have an automated external-link checker.
