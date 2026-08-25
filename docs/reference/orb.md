@@ -4,11 +4,13 @@ The Vexcalibur orb provides one command, one job, one executor, and four example
 
 The registry provides `vexcalibur-dev/vexcalibur@dev:alpha` for development
 testing. That reference can change after a trusted `main` build. No production
-version is available. The immutable `v0.1.0` GitHub release failed its
-production-only CircleCI review before registry publication. Source examples
-reference the planned `vexcalibur-dev/vexcalibur@0.1.1` patch release. Do not
-import the development reference into a project with environment variables,
-contexts, private source, or other credentials.
+version is available. The immutable `v0.1.1` GitHub Release exists, and its
+credentialless CircleCI checks passed, but the denied legacy publisher did not
+create the registry version. The current migration recovers that existing tag
+without moving or replacing it. Source examples reference
+`vexcalibur-dev/vexcalibur@0.1.1`, which will not resolve until recovery
+succeeds. Do not import the development reference into a project with
+environment variables, contexts, private source, or other credentials.
 
 The release will be a community orb. CircleCI organizations must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before importing it.
 
@@ -20,7 +22,7 @@ The release will be a community orb. CircleCI organizations must [allow uncertif
 | Default Vexcalibur package | `vexcalibur==0.3.1` |
 | Default executor image | `cimg/python:3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` |
 | Development orb reference | `vexcalibur-dev/vexcalibur@dev:alpha` |
-| Planned production orb version | `0.1.1` |
+| Pending registry recovery | `0.1.1` |
 | VEX formats in generation examples | CycloneDX 1.6 VEX JSON, OpenVEX 0.2.0 JSON, and CSAF 2.0 VEX JSON |
 | Registry home | `https://github.com/vexcalibur-dev/vexcalibur` |
 | Orb source | `https://github.com/vexcalibur-dev/vexcalibur-orb` |
