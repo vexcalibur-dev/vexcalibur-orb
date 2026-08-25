@@ -374,8 +374,37 @@ def _release_notes_format_one(
     )
 
 
+def _release_notes_format_two(
+    tag: str,
+    commit: str,
+    previous_tag: str,
+    version: Version,
+) -> str:
+    if previous_tag:
+        changes = (
+            f"[Compare {previous_tag}...{tag}]"
+            f"({REPOSITORY_URL}/compare/{previous_tag}...{tag})"
+        )
+    else:
+        changes = f"[Release commit]({REPOSITORY_URL}/commit/{commit})"
+    return (
+        f"# Vexcalibur Orb {tag}\n\n"
+        f"This release publishes `{REPOSITORY.removesuffix('-orb')}@"
+        f"{version.major}.{version.minor}.{version.patch}` "
+        f"from commit [`{commit[:12]}`]({REPOSITORY_URL}/commit/{commit}).\n\n"
+        f"## Changes\n\n{changes}\n\n"
+        "GitHub Actions publishes the registry entry from this immutable tag "
+        "after the exact CircleCI pipeline passes. The GitHub Release records "
+        "the source identity; the CircleCI registry entry is the consumer "
+        "artifact.\n"
+    )
+
+
 NotesRenderer = Callable[[str, str, str, Version], str]
-NOTES_RENDERERS: dict[str, NotesRenderer] = {"1": _release_notes_format_one}
+NOTES_RENDERERS: dict[str, NotesRenderer] = {
+    "1": _release_notes_format_one,
+    "2": _release_notes_format_two,
+}
 
 
 def release_notes(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
 from pathlib import Path
 import sys
 import threading
@@ -14,7 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import circleci_api  # noqa: E402
-from circleci_api import CircleCIError, Client, decode_json  # noqa: E402
+from circleci_api import (  # noqa: E402
+    CircleCIError,
+    CircleCIRequestError,
+    Client,
+    decode_json,
+)
 import circleci_release_status as status  # noqa: E402
 
 
@@ -33,7 +37,14 @@ def pipeline(
         "id": pipeline_id,
         "number": number,
         "project_slug": status.PROJECT_SLUG,
-        "vcs": {"tag": tag, "revision": revision},
+        "trigger": {"type": "webhook"},
+        "vcs": {
+            "origin_repository_url": status.REPOSITORY_URL,
+            "provider_name": "GitHub",
+            "revision": revision,
+            "tag": tag,
+            "target_repository_url": status.REPOSITORY_URL,
+        },
     }
 
 
@@ -67,12 +78,10 @@ class CircleCIJsonTests(unittest.TestCase):
                 self,
                 endpoint: str,
                 *,
-                method: str,
-                payload: dict[str, object] | None = None,
                 query: dict[str, str] | None = None,
                 paginated: bool = False,
             ) -> dict[str, object]:
-                del endpoint, method, payload, query, paginated
+                del endpoint, query, paginated
                 return {"items": [], "next_page_token": "same-token"}
 
         with self.assertRaisesRegex(CircleCIError, "repeated pagination token"):
@@ -92,12 +101,10 @@ class CircleCIJsonTests(unittest.TestCase):
                         self,
                         endpoint: str,
                         *,
-                        method: str,
-                        payload: dict[str, object] | None = None,
                         query: dict[str, str] | None = None,
                         paginated: bool = False,
                     ) -> dict[str, object]:
-                        del endpoint, method, payload, query, paginated
+                        del endpoint, query, paginated
                         return {"items": [], "next_page_token": token}
 
                 with self.assertRaisesRegex(CircleCIError, "pagination token"):
@@ -105,17 +112,16 @@ class CircleCIJsonTests(unittest.TestCase):
                         f"project/{circleci_api.PROJECT_SLUG}/pipeline"
                     )
 
-    def test_client_never_forwards_authentication_across_redirects(self) -> None:
-        target_requests: list[str | None] = []
+    def test_client_rejects_redirects_without_contacting_the_target(self) -> None:
+        target_requests = 0
 
         class TargetHandler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
-                target_requests.append(self.headers.get("Authorization"))
+                nonlocal target_requests
+                target_requests += 1
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"{}")
-
-            do_POST = do_GET
 
             def log_message(self, format: str, *args: object) -> None:
                 del format, args
@@ -130,8 +136,6 @@ class CircleCIJsonTests(unittest.TestCase):
                 self.end_headers()
 
             do_GET = redirect
-            do_POST = redirect
-
             def log_message(self, format: str, *args: object) -> None:
                 del format, args
 
@@ -146,11 +150,11 @@ class CircleCIJsonTests(unittest.TestCase):
         try:
             api_root = f"http://127.0.0.1:{redirect.server_port}"
             with patch.object(circleci_api, "API_ROOT", api_root):
-                client = Client("operator-token")
+                client = Client()
                 with self.assertRaisesRegex(CircleCIError, "redirected"):
-                    client.fetch_json("me/collaborations")
-                with self.assertRaisesRegex(CircleCIError, "redirected"):
-                    client.post_json(f"workflow/{WORKFLOW_1}/rerun", {"attempt": 1})
+                    client.fetch_pages(
+                        f"project/{circleci_api.PROJECT_SLUG}/pipeline"
+                    )
         finally:
             for server in servers:
                 server.shutdown()
@@ -158,77 +162,40 @@ class CircleCIJsonTests(unittest.TestCase):
             for thread in threads:
                 thread.join(timeout=5)
 
-        self.assertEqual(target_requests, [])
+        self.assertEqual(target_requests, 0)
 
     def test_endpoint_policy_is_a_complete_authorization_matrix(self) -> None:
         cases = (
-            ("GET", "me/collaborations", False, frozenset(), frozenset()),
             (
-                "GET",
-                f"project/{circleci_api.PROJECT_SLUG}",
-                False,
-                frozenset(),
-                frozenset(),
-            ),
-            (
-                "GET",
                 f"project/{circleci_api.PROJECT_SLUG}/pipeline",
                 True,
-                frozenset(),
-                frozenset({"page-token"}),
+                frozenset({"branch", "page-token"}),
             ),
             (
-                "GET",
-                "context",
-                True,
-                frozenset({"owner-id"}),
-                frozenset({"owner-id", "page-token"}),
-            ),
-            (
-                "GET",
-                f"context/{WORKFLOW_1}/restrictions",
-                True,
-                frozenset(),
-                frozenset({"page-token"}),
-            ),
-            (
-                "GET",
                 f"pipeline/{PIPELINE_1}/workflow",
                 True,
-                frozenset(),
                 frozenset({"page-token"}),
             ),
-            ("GET", f"workflow/{WORKFLOW_1}", False, frozenset(), frozenset()),
             (
-                "GET",
                 f"workflow/{WORKFLOW_1}/job",
                 True,
-                frozenset(),
                 frozenset({"page-token"}),
-            ),
-            (
-                "POST",
-                f"workflow/{WORKFLOW_1}/rerun",
-                False,
-                frozenset(),
-                frozenset(),
             ),
         )
         self.assertEqual(len(cases), len(circleci_api.ENDPOINT_POLICIES))
-        for method, endpoint, paginated, required_query, allowed_query in cases:
-            with self.subTest(method=method, endpoint=endpoint):
+        for endpoint, paginated, allowed_query in cases:
+            with self.subTest(endpoint=endpoint):
                 matches = [
                     policy
                     for policy in circleci_api.ENDPOINT_POLICIES
-                    if policy.method == method and policy.endpoint.fullmatch(endpoint)
+                    if policy.endpoint.fullmatch(endpoint)
                 ]
                 self.assertEqual(len(matches), 1)
                 self.assertEqual(matches[0].paginated, paginated)
-                self.assertEqual(matches[0].required_query, required_query)
                 self.assertEqual(matches[0].allowed_query, allowed_query)
 
     def test_client_rejects_unapproved_operations_and_queries(self) -> None:
-        client = Client("operator-token")
+        client = Client()
         rejected = (
             "https://example.com/capture",
             "../capture",
@@ -239,23 +206,63 @@ class CircleCIJsonTests(unittest.TestCase):
         for endpoint in rejected:
             with self.subTest(endpoint=endpoint):
                 with self.assertRaisesRegex(CircleCIError, "not authorized"):
-                    client.fetch_json(endpoint)
+                    client.fetch_pages(endpoint)
 
         with self.assertRaisesRegex(CircleCIError, "query is not authorized"):
-            client.fetch_pages("context", query={"target": "example.com"})
+            client.fetch_pages(
+                f"project/{circleci_api.PROJECT_SLUG}/pipeline",
+                query={"target": "example.com"},
+            )
+        with self.assertRaisesRegex(CircleCIError, "endpoint is not authorized"):
+            client.fetch_pages(f"workflow/{WORKFLOW_1}/rerun")
+        with self.assertRaisesRegex(CircleCIError, "must select main"):
+            client.fetch_pages(
+                f"project/{circleci_api.PROJECT_SLUG}/pipeline",
+                query={"branch": "feature"},
+            )
 
-        with self.assertRaisesRegex(CircleCIError, "missing required parameters"):
-            client.fetch_pages("context")
-        with self.assertRaisesRegex(CircleCIError, "organization ID"):
-            client.fetch_pages("context", query={"owner-id": "not-a-uuid"})
-        with self.assertRaisesRegex(CircleCIError, "pagination mode"):
-            client.fetch_json(f"project/{circleci_api.PROJECT_SLUG}/pipeline")
-        with self.assertRaisesRegex(CircleCIError, "pagination mode"):
-            client.fetch_pages("me/collaborations")
-        with self.assertRaisesRegex(CircleCIError, "endpoint is not authorized"):
-            client.post_json(f"workflow/{WORKFLOW_1}", {})
-        with self.assertRaisesRegex(CircleCIError, "endpoint is not authorized"):
-            client.fetch_json(f"workflow/{WORKFLOW_1}/rerun")
+    def test_http_failures_preserve_status_for_retry_policy(self) -> None:
+        class ApiHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(429)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ApiHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(
+                circleci_api,
+                "API_ROOT",
+                f"http://127.0.0.1:{server.server_port}",
+            ):
+                with self.assertRaises(CircleCIRequestError) as raised:
+                    Client().fetch_pages(
+                        f"project/{circleci_api.PROJECT_SLUG}/pipeline"
+                    )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        self.assertEqual(raised.exception.status, 429)
+
+    def test_truncated_response_is_a_retryable_request_error(self) -> None:
+        class TruncatedOpener:
+            def open(self, request: object, timeout: int) -> object:
+                del request, timeout
+                raise circleci_api.IncompleteRead(b'{"items":', 20)
+
+        client = Client()
+        client._opener = TruncatedOpener()  # type: ignore[assignment]
+        with self.assertRaises(CircleCIRequestError) as raised:
+            client.fetch_pages(f"project/{circleci_api.PROJECT_SLUG}/pipeline")
+
+        self.assertIsNone(raised.exception.status)
+        self.assertTrue(status.is_transient_request_error(raised.exception))
 
     def test_client_requires_canonical_uuid_values(self) -> None:
         self.assertEqual(
@@ -300,7 +307,7 @@ class CircleCIJsonTests(unittest.TestCase):
                 "API_ROOT",
                 f"http://127.0.0.1:{server.server_port}",
             ):
-                client = Client("operator-token")
+                client = Client()
                 self.assertEqual(
                     client.fetch_pages(f"project/{circleci_api.PROJECT_SLUG}/pipeline"),
                     [],
@@ -322,34 +329,23 @@ class CircleCIJsonTests(unittest.TestCase):
 
 
 class CircleCIReleaseStatusTests(unittest.TestCase):
-    def test_highest_numbered_matching_tag_pipeline_is_selected(self) -> None:
+    def test_multiple_matching_webhook_pipelines_are_rejected(self) -> None:
         pipelines = [
             pipeline(pipeline_id=PIPELINE_1, number=12, tag="v0.1.0"),
             pipeline(pipeline_id=PIPELINE_2, number=14, tag="v0.1.0"),
             pipeline(pipeline_id=WORKFLOW_1, number=15, tag="v0.2.0"),
         ]
 
-        selected = status.pipeline_for_tag(
-            pipelines,
-            tag="v0.1.0",
-            revision=RELEASE_REVISION,
-        )
-
-        self.assertEqual(selected["id"], PIPELINE_2)
-
-    def test_missing_and_duplicate_pipeline_numbers_are_rejected(self) -> None:
-        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
-            status.pipeline_for_tag([], tag="v0.1.0", revision=RELEASE_REVISION)
-        duplicate = [
-            pipeline(pipeline_id=PIPELINE_1, number=12, tag="v0.1.0"),
-            pipeline(pipeline_id=PIPELINE_2, number=12, tag="v0.1.0"),
-        ]
-        with self.assertRaisesRegex(CircleCIError, "duplicate pipeline number"):
+        with self.assertRaisesRegex(CircleCIError, "multiple CircleCI"):
             status.pipeline_for_tag(
-                duplicate,
+                pipelines,
                 tag="v0.1.0",
                 revision=RELEASE_REVISION,
             )
+
+    def test_missing_pipeline_is_rejected(self) -> None:
+        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
+            status.pipeline_for_tag([], tag="v0.1.0", revision=RELEASE_REVISION)
 
     def test_matching_pipeline_requires_exact_project_and_revision(self) -> None:
         wrong_revision = pipeline(
@@ -371,14 +367,85 @@ class CircleCIReleaseStatusTests(unittest.TestCase):
             tag="v0.1.0",
         )
         wrong_project["project_slug"] = "gh/example/other"
-        with self.assertRaisesRegex(CircleCIError, "project identity"):
+        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
             status.pipeline_for_tag(
                 [wrong_project],
                 tag="v0.1.0",
                 revision=RELEASE_REVISION,
             )
 
-    def test_latest_attempt_per_workflow_name_controls_verification(self) -> None:
+        wrong_trigger = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=12,
+            tag="v0.1.0",
+        )
+        wrong_trigger["trigger"] = {"type": "api"}
+        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
+            status.pipeline_for_tag(
+                [wrong_trigger],
+                tag="v0.1.0",
+                revision=RELEASE_REVISION,
+            )
+
+        wrong_origin = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=12,
+            tag="v0.1.0",
+        )
+        wrong_origin["vcs"]["origin_repository_url"] = (
+            "https://github.com/example/other"
+        )
+        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
+            status.pipeline_for_tag(
+                [wrong_origin],
+                tag="v0.1.0",
+                revision=RELEASE_REVISION,
+            )
+
+        valid = pipeline(
+            pipeline_id=PIPELINE_2,
+            number=12,
+            tag="v0.1.0",
+        )
+        api_lookalike = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=13,
+            tag="v0.1.0",
+        )
+        api_lookalike["trigger"] = {"type": "api"}
+        self.assertIs(
+            status.pipeline_for_tag(
+                [api_lookalike, valid],
+                tag="v0.1.0",
+                revision=RELEASE_REVISION,
+            ),
+            valid,
+        )
+
+    def test_matching_main_pipeline_requires_exact_revision(self) -> None:
+        item = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=12,
+            tag="",
+        )
+        item["vcs"].update({"branch": "main", "revision": RELEASE_REVISION})
+
+        self.assertIs(
+            status.pipeline_for_branch(
+                [item], branch="main", revision=RELEASE_REVISION
+            ),
+            item,
+        )
+        with self.assertRaisesRegex(CircleCIError, "no CircleCI pipeline"):
+            status.pipeline_for_branch(
+                [item], branch="main", revision="b" * 40
+            )
+        with self.assertRaisesRegex(CircleCIError, "main branch"):
+            status.pipeline_for_branch(
+                [item], branch="feature", revision=RELEASE_REVISION
+            )
+
+    def test_rerun_attempt_is_rejected_by_projection_verification(self) -> None:
         workflows = [
             workflow(
                 name="test-deploy",
@@ -400,13 +467,8 @@ class CircleCIReleaseStatusTests(unittest.TestCase):
             ),
         ]
 
-        self.assertEqual(
-            status.verify_workflow_projection(workflows),
-            (
-                f"lint-pack\tsuccess\t{WORKFLOW_3}",
-                f"test-deploy\tsuccess\t{WORKFLOW_2}",
-            ),
-        )
+        with self.assertRaisesRegex(CircleCIError, "rerun workflow attempts"):
+            status.verify_workflow_projection(workflows)
 
     def test_failed_latest_attempt_is_rejected(self) -> None:
         workflows = [
@@ -429,64 +491,6 @@ class CircleCIReleaseStatusTests(unittest.TestCase):
             f"test-deploy=failed.*{WORKFLOW_2}",
         ):
             status.verify_workflow_projection(workflows)
-
-    def test_original_release_workflow_excludes_later_ssh_derived_attempt(self) -> None:
-        workflows = [
-            workflow(
-                name="test-deploy",
-                workflow_id=WORKFLOW_2,
-                created_at="2026-08-15T12:01:00+00:00",
-                workflow_status="failed",
-            ),
-            workflow(
-                name="test-deploy",
-                workflow_id=WORKFLOW_1,
-                created_at="2026-08-15T12:00:00+00:00",
-                workflow_status="failed",
-            ),
-        ]
-
-        self.assertEqual(
-            status.original_workflow_attempt(workflows, name="test-deploy")["id"],
-            WORKFLOW_1,
-        )
-
-    def test_cli_failure_identifies_the_workflow_to_rerun(self) -> None:
-        workflows = [
-            workflow(
-                name="lint-pack",
-                workflow_id=WORKFLOW_1,
-                created_at="2026-08-15T12:00:00+00:00",
-                workflow_status="success",
-            ),
-            workflow(
-                name="test-deploy",
-                workflow_id=WORKFLOW_2,
-                created_at="2026-08-15T12:01:00+00:00",
-                workflow_status="failed",
-            ),
-        ]
-
-        class FakeClient:
-            def __init__(self, token: str) -> None:
-                self.token = token
-
-            def fetch_pages(self, path: str) -> list[dict[str, object]]:
-                return workflows
-
-        with (
-            patch.dict(os.environ, {"CIRCLECI_OPERATOR_TOKEN": "operator-token"}),
-            patch.object(status, "Client", FakeClient),
-            patch.object(
-                sys,
-                "argv",
-                ["circleci_release_status.py", "verify-pipeline", PIPELINE_1],
-            ),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            status.main()
-
-        self.assertIn(WORKFLOW_2, str(raised.exception))
 
     def test_workflow_timestamp_must_include_a_time_zone(self) -> None:
         workflows = [
@@ -516,6 +520,38 @@ class CircleCIReleaseStatusTests(unittest.TestCase):
         self.assertEqual(len(lines), len(status.REQUIRED_RELEASE_JOBS))
         self.assertTrue(all(line.startswith("job:") for line in lines))
 
+    def test_all_required_setup_jobs_must_succeed(self) -> None:
+        jobs = [
+            {
+                "name": name,
+                "id": f"00000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_SETUP_JOBS), start=1
+            )
+        ]
+        self.assertEqual(
+            len(status.verify_setup_jobs(jobs)), len(status.REQUIRED_SETUP_JOBS)
+        )
+
+        legacy_jobs = [
+            {
+                "name": name,
+                "id": f"10000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.LEGACY_SETUP_JOBS), start=1
+            )
+        ]
+        self.assertEqual(
+            len(status.verify_setup_jobs(legacy_jobs, allow_legacy_setup=True)),
+            len(status.LEGACY_SETUP_JOBS),
+        )
+        with self.assertRaisesRegex(CircleCIError, "missing jobs"):
+            status.verify_setup_jobs(legacy_jobs)
+
     def test_missing_or_failed_release_job_is_rejected(self) -> None:
         jobs = [
             {
@@ -532,53 +568,324 @@ class CircleCIReleaseStatusTests(unittest.TestCase):
         with self.assertRaisesRegex(CircleCIError, "not successful"):
             status.verify_release_jobs(jobs)
 
-    def test_exact_rerun_workflow_is_followed_to_success(self) -> None:
-        class FakeClient:
-            def __init__(self) -> None:
-                self.documents = [
-                    {"id": WORKFLOW_1, "status": "running"},
-                    {"id": WORKFLOW_1, "status": "success"},
-                ]
+    def test_legacy_denied_publisher_is_allowed_only_for_recovery(self) -> None:
+        jobs = [
+            {
+                "name": name,
+                "id": f"00000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_RELEASE_JOBS), start=1
+            )
+        ]
+        jobs.append(
+            {
+                "name": status.LEGACY_PUBLISH_JOB,
+                "id": "00000000-0000-4000-8000-999999999999",
+                "status": "unauthorized",
+            }
+        )
 
-            def fetch_json(self, path: str) -> dict[str, str]:
-                self.assert_path = path
-                return self.documents.pop(0)
+        with self.assertRaisesRegex(CircleCIError, "unexpected jobs"):
+            status.verify_release_jobs(jobs)
+        lines = status.verify_release_jobs(
+            jobs, allow_legacy_publisher_denial=True
+        )
+        self.assertIn(
+            "legacy:publish-release\tunauthorized\t"
+            "00000000-0000-4000-8000-999999999999",
+            lines,
+        )
+
+        with self.assertRaisesRegex(CircleCIError, "missing jobs"):
+            status.verify_release_jobs(
+                jobs[:-1], allow_legacy_publisher_denial=True
+            )
+
+        jobs[-1]["status"] = "success"
+        with self.assertRaisesRegex(CircleCIError, "unauthorized"):
+            status.verify_release_jobs(
+                jobs, allow_legacy_publisher_denial=True
+            )
+
+    def test_development_jobs_have_an_exact_allowlist(self) -> None:
+        jobs = [
+            {
+                "name": name,
+                "id": f"00000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_DEVELOPMENT_JOBS), start=1
+            )
+        ]
+        self.assertEqual(
+            len(status.verify_development_jobs(jobs)),
+            len(status.REQUIRED_DEVELOPMENT_JOBS),
+        )
+        jobs.append(
+            {
+                "name": "unexpected",
+                "id": "00000000-0000-4000-8000-999999999999",
+                "status": "success",
+            }
+        )
+        with self.assertRaisesRegex(CircleCIError, "unexpected jobs"):
+            status.verify_development_jobs(jobs)
+
+    def test_waits_for_exact_main_pipeline_and_verifies_its_jobs(self) -> None:
+        branch_pipeline = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=12,
+            tag="",
+        )
+        branch_pipeline["vcs"].update(
+            {"branch": "main", "revision": RELEASE_REVISION}
+        )
+        workflows = [
+            workflow(
+                name="lint-pack",
+                workflow_id=WORKFLOW_1,
+                created_at="2026-08-25T12:00:00Z",
+                workflow_status="success",
+            ),
+            workflow(
+                name="test-deploy",
+                workflow_id=WORKFLOW_2,
+                created_at="2026-08-25T12:01:00Z",
+                workflow_status="success",
+            ),
+        ]
+        jobs = [
+            {
+                "name": name,
+                "id": f"00000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_DEVELOPMENT_JOBS), start=1
+            )
+        ]
+        setup_jobs = [
+            {
+                "name": name,
+                "id": f"10000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_SETUP_JOBS), start=1
+            )
+        ]
+
+        class FakeClient:
+            pipeline_requests = 0
+            workflow_requests = 0
+            queries: list[dict[str, str] | None] = []
+
+            def fetch_pages(
+                self, path: str, *, query: dict[str, str] | None = None
+            ) -> list[dict[str, object]]:
+                if path == f"project/{status.PROJECT_SLUG}/pipeline":
+                    self.pipeline_requests += 1
+                    self.queries.append(query)
+                    if self.pipeline_requests == 1:
+                        raise CircleCIRequestError(
+                            "temporary CircleCI failure", status=503
+                        )
+                    return [branch_pipeline]
+                if path == f"pipeline/{PIPELINE_1}/workflow":
+                    self.workflow_requests += 1
+                    if self.workflow_requests == 1:
+                        return [
+                            workflow(
+                                name="lint-pack",
+                                workflow_id=WORKFLOW_1,
+                                created_at="2026-08-25T12:00:00Z",
+                                workflow_status="running",
+                            )
+                        ]
+                    return workflows
+                if path == f"workflow/{WORKFLOW_1}/job":
+                    return setup_jobs
+                if path == f"workflow/{WORKFLOW_2}/job":
+                    return jobs
+                raise AssertionError(path)
 
         client = FakeClient()
-        original_sleep = status.time.sleep
-        status.time.sleep = lambda _seconds: None
-        try:
-            result = status.wait_for_workflow(
+        with patch.object(status.time, "sleep", return_value=None):
+            lines = status.wait_for_pipeline(
                 client,  # type: ignore[arg-type]
-                workflow_id=WORKFLOW_1,
+                revision=RELEASE_REVISION,
+                tag=None,
+                branch="main",
                 timeout=30,
                 poll_interval=1,
             )
-        finally:
-            status.time.sleep = original_sleep
 
-        self.assertEqual(result, "success")
-        self.assertEqual(client.assert_path, f"workflow/{WORKFLOW_1}")
-
-    def test_rerun_uses_json_client_and_validates_returned_identity(self) -> None:
-        class FakeClient:
-            def post_json(
-                self, path: str, payload: dict[str, object]
-            ) -> dict[str, str]:
-                self.path = path
-                self.payload = payload
-                return {"workflow_id": WORKFLOW_2}
-
-        client = FakeClient()
-        result = status.rerun_workflow(  # type: ignore[arg-type]
-            client,
-            workflow_id=WORKFLOW_1,
+        self.assertEqual(lines[0], f"pipeline\t{PIPELINE_1}")
+        self.assertEqual(client.pipeline_requests, 3)
+        self.assertEqual(client.workflow_requests, 2)
+        self.assertEqual(
+            client.queries,
+            [{"branch": "main"}, {"branch": "main"}, {"branch": "main"}],
+        )
+        self.assertEqual(
+            len(lines),
+            3
+            + len(status.REQUIRED_SETUP_JOBS)
+            + len(status.REQUIRED_DEVELOPMENT_JOBS),
         )
 
-        self.assertEqual(result, WORKFLOW_2)
-        self.assertEqual(client.path, f"workflow/{WORKFLOW_1}/rerun")
-        self.assertEqual(client.payload, {"from_failed": False})
+    def test_waits_for_exact_tag_pipeline_with_legacy_recovery(self) -> None:
+        workflows = [
+            workflow(
+                name="lint-pack",
+                workflow_id=WORKFLOW_1,
+                created_at="2026-08-25T12:00:00Z",
+                workflow_status="success",
+            ),
+            workflow(
+                name="test-deploy",
+                workflow_id=WORKFLOW_2,
+                created_at="2026-08-25T12:01:00Z",
+                workflow_status="unauthorized",
+            ),
+        ]
+        jobs = [
+            {
+                "name": name,
+                "id": f"00000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.REQUIRED_RELEASE_JOBS), start=1
+            )
+        ]
+        jobs.append(
+            {
+                "name": status.LEGACY_PUBLISH_JOB,
+                "id": "00000000-0000-4000-8000-999999999999",
+                "status": "unauthorized",
+            }
+        )
+        setup_jobs = [
+            {
+                "name": name,
+                "id": f"10000000-0000-4000-8000-{index:012d}",
+                "status": "success",
+            }
+            for index, name in enumerate(
+                sorted(status.LEGACY_SETUP_JOBS), start=1
+            )
+        ]
 
+        class FakeClient:
+            def fetch_pages(
+                self, path: str, *, query: dict[str, str] | None = None
+            ) -> list[dict[str, object]]:
+                if path == f"project/{status.PROJECT_SLUG}/pipeline":
+                    self.assert_query = query
+                    return [
+                        pipeline(
+                            pipeline_id=PIPELINE_1,
+                            number=12,
+                            tag="v0.1.1",
+                        )
+                    ]
+                if path == f"pipeline/{PIPELINE_1}/workflow":
+                    return workflows
+                if path == f"workflow/{WORKFLOW_1}/job":
+                    return setup_jobs
+                if path == f"workflow/{WORKFLOW_2}/job":
+                    return jobs
+                raise AssertionError(path)
+
+        lines = status.wait_for_pipeline(
+            FakeClient(),  # type: ignore[arg-type]
+            revision=RELEASE_REVISION,
+            tag="v0.1.1",
+            branch=None,
+            timeout=30,
+            poll_interval=1,
+            allow_legacy_publisher_denial=True,
+        )
+
+        self.assertEqual(lines[0], f"pipeline\t{PIPELINE_1}")
+        self.assertTrue(lines[-1].startswith("legacy:publish-release"))
+
+        arguments = status.parser().parse_args(
+            [
+                "wait-tag-pipeline",
+                "v0.1.1",
+                RELEASE_REVISION,
+                "--allow-legacy-publisher-denial",
+            ]
+        )
+        self.assertEqual(arguments.command, "wait-tag-pipeline")
+        self.assertTrue(arguments.allow_legacy_publisher_denial)
+
+    def test_pipeline_wait_rejects_terminal_incomplete_and_rerun_workflows(
+        self,
+    ) -> None:
+        branch_pipeline = pipeline(
+            pipeline_id=PIPELINE_1,
+            number=12,
+            tag="",
+        )
+        branch_pipeline["vcs"].update(
+            {"branch": "main", "revision": RELEASE_REVISION}
+        )
+        failed = workflow(
+            name="lint-pack",
+            workflow_id=WORKFLOW_1,
+            created_at="2026-08-25T12:00:00Z",
+            workflow_status="failed",
+        )
+
+        class FakeClient:
+            def __init__(self, workflows: list[dict[str, object]]) -> None:
+                self.workflows = workflows
+
+            def fetch_pages(
+                self, path: str, *, query: dict[str, str] | None = None
+            ) -> list[dict[str, object]]:
+                if path == f"project/{status.PROJECT_SLUG}/pipeline":
+                    self.query = query
+                    return [branch_pipeline]
+                if path == f"pipeline/{PIPELINE_1}/workflow":
+                    return self.workflows
+                raise AssertionError(path)
+
+        with self.assertRaisesRegex(CircleCIError, "failed before"):
+            status.wait_for_pipeline(
+                FakeClient([failed]),  # type: ignore[arg-type]
+                revision=RELEASE_REVISION,
+                tag=None,
+                branch="main",
+                timeout=30,
+                poll_interval=1,
+            )
+
+        rerun = dict(failed)
+        rerun.update(
+            {
+                "id": WORKFLOW_2,
+                "created_at": "2026-08-25T12:01:00Z",
+                "status": "success",
+            }
+        )
+        original = dict(failed)
+        original["status"] = "success"
+        with self.assertRaisesRegex(CircleCIError, "rerun workflow attempts"):
+            status.wait_for_pipeline(
+                FakeClient([original, rerun]),  # type: ignore[arg-type]
+                revision=RELEASE_REVISION,
+                tag=None,
+                branch="main",
+                timeout=30,
+                poll_interval=1,
+            )
 
 if __name__ == "__main__":
     unittest.main()

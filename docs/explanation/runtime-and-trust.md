@@ -58,9 +58,20 @@ CircleCI controls the job's effective permissions, context access, artifact visi
 
 ## Orb publication uses a separate credential boundary
 
-The repository's own publication workflow does not give the registry token to the jobs that pack or test the orb. Those jobs record the packed `orb.yml` SHA-256 and pass the file with its checksum through a CircleCI workspace. Only the later publish job receives the restricted `orb-publishing` context. It runs in a CircleCI CLI image pinned by tag and registry digest and verifies the checksum before invoking the registry command.
+CircleCI tests and packs without a registry credential. GitHub Actions owns the one `CIRCLE_TOKEN` secret in a branch-restricted environment, then waits for CircleCI's exact pipeline, workflow, and job results before it packs again and publishes. The two systems therefore have different jobs: CircleCI supplies independent test evidence, while GitHub controls release metadata and registry access.
 
-The checksum detects corruption between the pack and publish steps, but it does not independently authenticate CircleCI's workspace because the file and checksum use the same storage path. Context restrictions, successful prerequisite jobs, CircleCI workspace controls, and the immutable executor pin are all part of this boundary. The [publishing guide](../how-to/publish-orb.md) describes the release procedure and recovery checks.
+The previous `orb-publishing` CircleCI context and its token are removed before
+this model becomes active. That matters even though the new verifier rejects
+rerun evidence: an older immutable CircleCI configuration could otherwise use
+the context and publish before GitHub evaluates the evidence.
+
+The CircleCI setup workflow uses checked-in jobs on the digest-pinned CircleCI CLI image. Those jobs pack and validate the Orb, then submit the checked-in continuation configuration. They don't install tools or execute a reusable setup Orb whose dependencies could change after review. GitHub CI runs the repository-pinned ShellCheck release before publication can begin.
+
+For development versions, GitHub accepts only a successful `CI` workflow for a push from this repository's current `main` commit. It publishes a commit-specific development reference first, checks `main` again, and only then moves `dev:alpha`. Serialization prevents two successful runs from racing the mutable alias.
+
+For production versions, GitHub checks out current release tooling separately from the immutable tag source. The tooling verifies the exact CircleCI tag pipeline and packs the tag's `src` directory. The publisher then reads the registry source back and compares its bytes with the candidate. A retry can confirm an existing matching version, but it cannot replace a different one.
+
+This division avoids a CircleCI authorization problem: an App-created GitHub tag does not have to map to a human CircleCI organization member before publication can start. It also keeps the broad personal CircleCI token out of CircleCI jobs and workspaces. The [publishing guide](../how-to/publish-orb.md) describes setup, release, recovery, and rotation.
 
 ## Output survives only when the workflow preserves it
 

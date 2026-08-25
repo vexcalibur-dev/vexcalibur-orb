@@ -29,12 +29,23 @@ class PublishProductionOrbTests(unittest.TestCase):
 set -euo pipefail
 printf '%s\\n' "$*" >>"${FAKE_LOG}"
 if [[ "$1 $2" == "orb source" ]]; then
+  source_count=0
+  [[ ! -f "${FAKE_SOURCE_COUNT}" ]] \
+    || source_count="$(cat "${FAKE_SOURCE_COUNT}")"
+  source_count=$((source_count + 1))
+  printf '%s\n' "${source_count}" >"${FAKE_SOURCE_COUNT}"
+  if [[ "${FAKE_MODE}" == "final-check" ]]; then
+    [[ "${source_count}" -ge 14 ]] || exit 1
+    cat dist/orb.yml
+    exit 0
+  fi
   [[ -f "${FAKE_REGISTRY}" ]] || exit 1
   cat "${FAKE_REGISTRY}"
   exit 0
 fi
 if [[ "$1 $2" == "orb publish" ]]; then
-  if [[ "${FAKE_MODE}" != "success-no-registry" ]]; then
+  if [[ "${FAKE_MODE}" != "success-no-registry" \
+    && "${FAKE_MODE}" != "final-check" ]]; then
     cp dist/orb.yml "${FAKE_REGISTRY}"
   fi
   [[ "${FAKE_MODE}" != "lost-response" ]] || exit 1
@@ -53,13 +64,16 @@ exit 2
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def run_script(self, *, mode: str) -> subprocess.CompletedProcess[str]:
+    def run_script(
+        self, *, mode: str, release_tag: str = "v0.1.0"
+    ) -> subprocess.CompletedProcess[str]:
         environment = {
-            "CIRCLE_TAG": "v0.1.0",
             "CIRCLE_TOKEN": "test-token",
             "FAKE_LOG": str(self.log),
             "FAKE_MODE": mode,
             "FAKE_REGISTRY": str(self.registry),
+            "FAKE_SOURCE_COUNT": str(self.root / "source-count"),
+            "ORB_RELEASE_TAG": release_tag,
             "PATH": f"{self.bin}:{os.environ.get('PATH', '')}",
         }
         return subprocess.run(
@@ -101,6 +115,21 @@ exit 2
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Could not publish or verify", result.stderr)
+
+    def test_registry_is_checked_at_the_full_retry_deadline(self) -> None:
+        result = self.run_script(mode="final-check")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "source-count").read_text(encoding="utf-8"), "14\n"
+        )
+
+    def test_release_tag_override_must_be_an_exact_version(self) -> None:
+        for value in ("", "0.1.0", "v01.1.0", "v0.1", "v0.1.0-rc.1"):
+            with self.subTest(value=value):
+                result = self.run_script(mode="success", release_tag=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("exact vMAJOR.MINOR.PATCH", result.stderr)
 
 
 if __name__ == "__main__":

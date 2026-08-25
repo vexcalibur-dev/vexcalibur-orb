@@ -1,246 +1,257 @@
 # Publish the orb
 
-This guide is for Vexcalibur maintainers who can administer the CircleCI organization, its contexts, and GitHub release tags. The `vexcalibur-dev/vexcalibur` registry entry exists and development versions publish from `main` after the hosted checks pass.
+This guide is for Vexcalibur maintainers who administer the GitHub repository
+and CircleCI namespace. GitHub Actions publishes development and production
+Orb versions. CircleCI tests the same commit but never receives the registry
+credential.
 
-The GitHub release setup is complete. GitHub enforces immutable releases, restricts release-tag creation to the Vexcalibur automation App, and prevents every actor from updating or deleting a release tag. The CircleCI setup is ready only when the verifier in step 10 passes. The [production release policy](../reference/release-policy.md) records the exact GitHub controls and signed owner evidence.
-
-A production orb version is immutable. Complete the development publication and verification before you publish a production version. The automation creates the tag; maintainers don't create release-looking tags by hand.
-
-The `orb-publishing` context must keep the `vexcalibur-orb` project as its sole
-authorization grant. Do not add `All members` or another security group.
-CircleCI treats project and group assignments as alternatives, not cumulative
-requirements. Every CircleCI organization administrator must also be trusted
-because administrators retain access to restricted contexts.
+Production versions are immutable. The release workflow creates the tag, waits
+for exact GitHub and CircleCI evidence, packs the tagged source, and publishes
+the matching registry version. Don't create, move, replace, or delete a release
+tag by hand.
 
 ## Gather the required access
 
 You need:
 
-- Owner access to the Vexcalibur CircleCI organization
-- Maintainer access to `vexcalibur-dev/vexcalibur-orb` on GitHub
-- Repository admin access when you recover a GitHub webhook delivery
-- A CircleCI personal API token owned by an identity that can publish the Vexcalibur namespace
-- Permission to create a restricted CircleCI context
-- Bash 4 or newer for the manual release watcher
-- A current GitHub CLI that supports the `gh run list --created` filter
-- The [CircleCI CLI](https://circleci.com/docs/guides/toolkit/local-cli/) for local checks and registry verification
-- A separate [CircleCI personal API token](https://circleci.com/docs/guides/toolkit/managing-api-tokens/) for monitoring or rerunning a failed hosted workflow
+- Admin access to `vexcalibur-dev/vexcalibur-orb` on GitHub
+- Owner access to the Vexcalibur organization in CircleCI
+- A CircleCI personal API token for an identity that can publish the
+  `vexcalibur-dev` namespace
+- GitHub CLI and CircleCI CLI for setup and registry verification
 
-The token used by the publishing jobs grants broad organization access. CircleCI personal tokens don't have selectable scopes. Store this token only in the CircleCI context described below, and use an identity that can publish the Vexcalibur namespace. Don't reuse it for local CLI work or add it to another secret store for this workflow. Never export it in a shared shell or paste it into configuration. Use a separate personal token as `CIRCLECI_OPERATOR_TOKEN` when you run the monitoring and recovery commands in this guide, then unset it when you finish. Give the operator token a short expiration and revoke it when it is no longer needed.
+CircleCI personal tokens created in the web application have full API read and
+write access. They also expire on the date you select, no more than one year
+after creation. Use a dedicated token named for Orb automation and record its
+expiration in your credential manager.
 
-Run `circleci setup` to authenticate the local CLI through its prompt with your maintainer credentials. Confirm the CircleCI host, then verify the organization UUID separately before creating registry resources.
+Create it under **User Settings**, then **Personal API Tokens** in CircleCI.
+Name it `vexcalibur-orb-github-publishing`, choose the longest acceptable
+expiration, and store the value when CircleCI shows it. You cannot retrieve the
+value later.
 
-## Create the registry resources once
+The publication workflow uses the token only for CircleCI CLI publication.
+Pipeline, workflow, and job evidence for this public project is available
+without authentication. Store the token only as the GitHub environment secret
+described below. Don't add it to a CircleCI context, repository variable,
+workflow file, or local shell profile.
 
-Skip a step when the named resource already exists and is owned by the expected Vexcalibur organization. The namespace and public orb are global registry names; don't create substitutes from a personal organization.
+## Create the registry entry once
 
-1. Find the CircleCI organization UUID and assign it locally:
+Skip this section when the namespace and Orb already exist under the expected
+Vexcalibur organization.
+
+1. Find the CircleCI organization ID under **Organization Settings**.
 
    ```bash
    CIRCLECI_ORG_ID=00000000-0000-0000-0000-000000000000
    ```
 
-   Replace the reserved example UUID with the Vexcalibur CircleCI organization UUID.
+   Replace the example UUID with the Vexcalibur organization ID.
 
-2. Create the public namespace:
+2. Authenticate the local CircleCI CLI with your maintainer account:
 
    ```bash
-   circleci namespace create vexcalibur-dev --org-id "$CIRCLECI_ORG_ID" --no-prompt
+   circleci setup
    ```
 
-3. Create the public orb:
+3. Create the namespace if it does not exist:
+
+   ```bash
+   circleci namespace create vexcalibur-dev \
+     --org-id "$CIRCLECI_ORG_ID" \
+     --no-prompt
+   ```
+
+4. Create the public Orb entry:
 
    ```bash
    circleci orb create vexcalibur-dev/vexcalibur --no-prompt
    ```
 
-   The command creates a world-readable registry entry. It doesn't publish a version.
+The final command creates a world-readable registry entry. It does not publish
+a version.
 
-4. Connect `vexcalibur-dev/vexcalibur-orb` through CircleCI's GitHub OAuth integration. The resulting `github` project type and Git URL must match the expression in step 8.
+5. Connect `vexcalibur-dev/vexcalibur-orb` through CircleCI's GitHub OAuth
+   integration.
 
-5. In **Project Settings** > **Advanced**, confirm **Enable dynamic config using setup workflows** is on. CircleCI enables it by default for newer projects, but the setting still needs verification. The checked-in `.circleci/config.yml` has `setup: true` and uses `orb-tools/continue` to load `.circleci/test-deploy.yml`. See CircleCI's [dynamic configuration setup](https://circleci.com/docs/guides/orchestrate/dynamic-config/#enable-dynamic-config).
+6. Under **Project Settings**, then **Advanced**, confirm **Enable dynamic
+   config using setup workflows** is on. The checked-in setup configuration
+   uses a local, digest-pinned continuation job to load
+   `.circleci/test-deploy.yml`. CircleCI's
+   [dynamic configuration guide](https://circleci.com/docs/guides/orchestrate/dynamic-config/)
+   describes that project setting.
 
-6. Create an empty CircleCI context named `orb-publishing`. Don't add the
-   production token yet.
+## Configure the GitHub publishing environment
 
-   ```bash
-   circleci context create --org-id "$CIRCLECI_ORG_ID" orb-publishing
-   ```
+Create a repository environment named `circleci-orb-publishing`. Select only
+the `main` branch under **Deployment branches and tags**. Do not add a wait
+timer, required reviewer, or custom protection rule. The workflows already
+require successful checks and exact source identities, so a manual approval
+would add delay without adding independent evidence.
 
-   Skip this command when the context already exists.
+Under the environment's administrator-bypass setting, clear **Allow
+administrators to bypass configured protection rules**. There is one
+maintainer, so this does not replace review; it prevents an accidental manual
+bypass from broadening the selected-branch rule.
 
-7. Add a project restriction that limits `orb-publishing` to `vexcalibur-dev/vexcalibur-orb`. Don't leave a publishing context available to every project in the organization.
-
-8. Add this expression restriction to `orb-publishing`:
-
-   ```text
-   pipeline.project.type == "github" and pipeline.project.git_url == "https://github.com/vexcalibur-dev/vexcalibur-orb" and (pipeline.git.branch == "main" or pipeline.git.tag matches /^v[0-9]+\.[0-9]+\.[0-9]+$/) and not job.ssh.enabled and not (pipeline.config_source starts-with "api")
-   ```
-
-   The expression repeats the exact GitHub repository identity, then permits
-   the publishing context only on `main` or an exact production tag. It rejects
-   SSH reruns and unversioned API configuration. CircleCI fails closed when a
-   value is missing or the expression cannot be evaluated.
-
-9. Remove every security-group restriction, including `All members`. Keep the
-   `vexcalibur-orb` project restriction as the only authorization grant.
-
-   Project and group restrictions are OR grants in CircleCI. Adding a group
-   would let that group use the context from another project when the expression
-   matches. The expression in step 8 supplies the second, independent repository
-   identity check. Organization administrators retain unrestricted context
-   access, so every administrator must be trusted to publish.
-
-10. Verify the live context restrictions in CircleCI. The context must show the
-    `vexcalibur-orb` project and the exact expression from step 8. It must not
-    show a security-group restriction.
-
-    CircleCI documents [project, group, and expression restrictions](https://circleci.com/docs/guides/security/contexts/#restrict-a-context).
-    Complete this verification before storing or using the production token.
-
-    After you export a separate personal API token as `CIRCLECI_OPERATOR_TOKEN`, run the read-only policy check from the repository root:
-
-    ```bash
-    python -I scripts/verify_circleci_release_context.py
-    unset CIRCLECI_OPERATOR_TOKEN
-    ```
-
-    The command should report that it verified the project and expression restrictions. It fails if the project changes, the context has any group grant, or the expression no longer binds the exact repository to `main` and release tags. It also checks the SSH and API-config rejection terms. The first production tag pipeline is the positive hosted test for exact-tag access; don't test the negative paths by trying to expose the publishing context from an SSH or API-supplied job.
-
-11. Add GitHub tag rulesets for `v*`. Allow only the Vexcalibur automation App
-    to create release tags, and don't allow any actor to update or delete them.
-    Verify the live bypass actors and rules before continuing. The CircleCI
-    release workflow narrows production tags further to
-    `vMAJOR.MINOR.PATCH`.
-
-    Configure the App permissions, rules, bypass actors, and signed attestation exactly as described in the [production release policy](../reference/release-policy.md). A repository Actions variable is not valid owner evidence because a repository writer can replace it without changing reviewed source.
-
-12. Store the personal API token under the exact variable name `CIRCLE_TOKEN`:
-
-    ```bash
-    circleci context store-secret --org-id "$CIRCLECI_ORG_ID" orb-publishing CIRCLE_TOKEN
-    ```
-
-    `store-secret` prompts for the value so it doesn't become a command-line
-    argument.
-
-Rotate the token when a trusted CircleCI administrator loses access or whenever the credential may have been exposed. Update the context after rotation and confirm the former token no longer works.
-
-## Validate the source locally
-
-Follow [the contributor setup](../../CONTRIBUTING.md#prepare-a-development-environment), activate `.venv`, and run these commands from the repository root:
+Use the GitHub web interface, or create the environment with the API:
 
 ```bash
+REPOSITORY=vexcalibur-dev/vexcalibur-orb
+ENVIRONMENT=circleci-orb-publishing
+
+gh api \
+  --method PUT \
+  "repos/${REPOSITORY}/environments/${ENVIRONMENT}" \
+  -F wait_timer=0 \
+  -F prevent_self_review=false \
+  -F deployment_branch_policy[protected_branches]=false \
+  -F deployment_branch_policy[custom_branch_policies]=true
+
+gh api \
+  --method POST \
+  "repos/${REPOSITORY}/environments/${ENVIRONMENT}/deployment-branch-policies" \
+  -f name=main \
+  -f type=branch
+```
+
+The REST API does not expose the administrator-bypass control. After the API
+commands finish, open the environment under **Settings**, then **Environments**,
+and clear **Allow administrators to bypass configured protection rules**.
+
+Before adding the token, inspect the environment and its branch rule:
+
+```bash
+gh api "repos/${REPOSITORY}/environments/${ENVIRONMENT}"
+gh api \
+  "repos/${REPOSITORY}/environments/${ENVIRONMENT}/deployment-branch-policies"
+```
+
+The environment must report `can_admins_bypass: false` and a custom branch
+policy with one `branch` rule named `main`. Stop if another ref can use the
+environment.
+
+Store the CircleCI personal token through the GitHub CLI prompt:
+
+```bash
+gh secret set CIRCLE_TOKEN \
+  --repo "${REPOSITORY}" \
+  --env "${ENVIRONMENT}"
+```
+
+The command reads the value without putting it on the command line. Confirm
+that GitHub recorded the secret name:
+
+```bash
+gh secret list --repo "${REPOSITORY}" --env "${ENVIRONMENT}"
+```
+
+GitHub does not return the value. The list should contain `CIRCLE_TOKEN`.
+
+## Decommission the legacy CircleCI credential
+
+Complete this migration step after GitHub lists the new environment secret and
+before the publishing-workflow pull request merges. The existing
+`orb-publishing` CircleCI context can still authorize the publisher embedded in
+an older immutable configuration. Leaving it available would let a legacy
+workflow rerun publish outside the new GitHub evidence gate.
+
+Authenticate the CircleCI CLI with your maintainer account, then copy the
+Vexcalibur organization ID from **Organization Settings**, then **Overview**:
+
+```bash
+circleci setup
+CIRCLECI_ORG_ID=00000000-0000-0000-0000-000000000000
+```
+
+Replace the example UUID before continuing. Confirm the context and variable:
+
+```bash
+circleci context show \
+  --org-id "${CIRCLECI_ORG_ID}" \
+  orb-publishing
+```
+
+The result must list the `orb-publishing` context and its `CIRCLE_TOKEN`
+variable.
+
+Delete the old context:
+
+```bash
+circleci context delete \
+  --org-id "${CIRCLECI_ORG_ID}" \
+  orb-publishing
+```
+
+Confirm the prompt only after the CLI names the Vexcalibur organization and
+`orb-publishing` context. If another project still uses that context, stop and
+remove only its `CIRCLE_TOKEN` instead:
+
+```bash
+circleci context remove-secret \
+  --org-id "${CIRCLECI_ORG_ID}" \
+  orb-publishing \
+  CIRCLE_TOKEN
+```
+
+Then revoke the old personal token in CircleCI. Do not revoke the new token
+stored in GitHub. The migration is ready to merge only after the legacy context
+no longer exposes `CIRCLE_TOKEN` and the old token cannot authenticate.
+
+## Validate a change locally
+
+Follow [the contributor setup](../../CONTRIBUTING.md#prepare-a-development-environment),
+then run:
+
+```bash
+pre-commit run --all-files
 python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-Both commands should exit with status `0`. The validation script packs the source, injects it into `.circleci/test-deploy.yml`, processes both CircleCI configurations, and checks the sensitive jobs' executor and step order. It validates every generated configuration. Generated files stay in a temporary directory.
+The commands should exit with status `0`. The CircleCI validator packs the Orb,
+validates both source and processed configurations, and confirms that neither
+CircleCI configuration contains the publishing context or a publication job.
 
-The publication handoff separates artifact creation from credential use:
+## Publish a development version
 
-```mermaid
-flowchart LR
-    pack[Credentialless pack job] --> hash[Record orb.yml SHA-256]
-    hash --> workspace[Persist orb.yml and checksum]
-    workspace --> verify[Verify checksum in pinned publish executor]
-    verify --> publish[Publish with restricted CIRCLE_TOKEN]
-```
+A successful GitHub `CI` run for a push to the current `main` commit triggers
+`Publish development Orb`. The workflow then:
 
-The pack job runs without the `orb-publishing` context. It stores the checksum as a CircleCI artifact and persists `orb.yml` with its one-entry checksum manifest. The publish job uses the same CircleCI CLI image pinned by tag and registry digest, attaches those two files, and verifies the digest before the orb-tools publication step. A checksum mismatch stops the job before publication. The workflow disables orb-tools' optional pull-request comment, so the publishing context does not need a GitHub token.
+1. Confirms that the successful run came from this repository's `main` branch.
+2. Confirms that its commit is still the live `main` commit.
+3. Waits for the CircleCI branch pipeline for that exact commit.
+4. Requires every expected CircleCI workflow and acceptance job to pass.
+5. Packs and validates the source from that commit.
+6. Publishes `dev:<full-commit-sha>` and verifies the registry source.
+7. Confirms `main` again before publishing and verifying `dev:alpha`.
 
-The checksum detects an artifact that changed between the two stages. Because
-the orb and checksum travel through the same CircleCI workspace, it does not
-independently authenticate CircleCI's storage. The project and expression
-restrictions remain part of the release trust boundary. So do the immutable
-executor image, CircleCI workspace controls, and the set of trusted CircleCI
-administrators.
+The concurrency group serializes development publication, and the workflow
+checks `main` immediately before it writes `dev:alpha`. The registry does not
+offer compare-and-set publication, so the alias can briefly lag if `main`
+advances during that network call. The next successful `main` publication
+corrects it.
 
-## Publish and test a development version
-
-Push the release candidate to `main`. CircleCI runs the setup workflow, then continues into `test-deploy` with the packed local orb inserted under the `vexcalibur` name.
-
-`publish-dev` runs automatically after all four prerequisites succeed:
-
-- `pack-dev`
-- `command-help-test`
-- `format-output-test`
-- `job-help-test`
-
-Open the `pack-dev` artifacts and confirm `packed-orb/orb.yml.sha256` contains one SHA-256 entry for `orb.yml`. The `publish-dev` job verifies that entry before it publishes.
-
-The `publish-dev` job uses the restricted context to publish two development aliases: `dev:<commit-sha>` and `dev:alpha`. Development versions expire after 90 days, and both aliases are mutable. The commit-shaped name identifies the intended publication; it does not make that publication immutable.
-
-From a checkout of the published commit, run:
+Inspect the result without executing it:
 
 ```bash
-DEV_VERSION="dev:$(git rev-parse HEAD)"
-circleci orb info "vexcalibur-dev/vexcalibur@${DEV_VERSION}"
-
-(
-  set -euo pipefail
-  PACKED_SOURCE="$(mktemp)"
-  REGISTRY_SOURCE="$(mktemp)"
-  trap 'rm "$PACKED_SOURCE" "$REGISTRY_SOURCE"' EXIT
-
-  circleci orb pack --skip-update-check src >"$PACKED_SOURCE"
-  circleci orb source --skip-update-check \
-    "vexcalibur-dev/vexcalibur@${DEV_VERSION}" >"$REGISTRY_SOURCE"
-  python - "$PACKED_SOURCE" "$REGISTRY_SOURCE" <<'PY'
-from pathlib import Path
-import sys
-
-packed = Path(sys.argv[1]).read_bytes()
-registry = Path(sys.argv[2]).read_bytes()
-if registry not in (packed, packed + b"\n"):
-    raise SystemExit("registry source differs from the locally packed orb")
-PY
-)
+MAIN_SHA="$(
+  gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
+    --jq '.object.sha'
+)"
+circleci orb info "vexcalibur-dev/vexcalibur@dev:${MAIN_SHA}"
+circleci orb info vexcalibur-dev/vexcalibur@dev:alpha
 ```
 
-The metadata command should resolve the named development version. The source
-comparison should produce no output and exit with status `0`; it ignores only
-one trailing newline added by the registry. Confirm the production
-`publish-release` job did not run on the branch pipeline.
-
-The continuation tests exercise the packed command and job with `--help`. They also generate and validate CycloneDX, OpenVEX, and CSAF JSON from checked-in local fixtures. The format test uses `--offline` and never queries public OSV.
-
-The CSAF check verifies:
-
-- Publisher and tracking metadata
-- The first document revision
-- The Vexcalibur generator version
-- A versioned product package URL
-- The `under_investigation` mapping
-- The absence of a root `$schema` property
-
-These checks run only in hosted CircleCI. Local configuration validation proves that the workflow parses, not that its jobs have executed.
+Both commands should identify the development Orb. Development versions are
+mutable and are not supported production releases.
 
 ## Release a production version
 
-The GitHub `Release` workflow controls production release metadata. It waits for CI on the exact source commit, recalculates the release plan, checks the live immutable-release policy and tag rules, and then creates an annotated tag and GitHub Release with the Vexcalibur automation App. The App token exists only during the publication job.
-
-CircleCI remains the only production registry publisher. The App-created tag starts a CircleCI tag pipeline with this sequence:
-
-```mermaid
-flowchart LR
-    main[Validated main commit] --> plan[Plan semantic version]
-    plan --> tag[Create annotated Git tag]
-    tag --> github[Create immutable GitHub Release]
-    tag --> circle[Start CircleCI tag pipeline]
-    circle --> test[Pack and run acceptance tests]
-    test --> registry[Publish immutable orb version]
-```
-
-Don't create, move, replace, or delete a release-looking tag. Retry a transient failure from the existing tag. Fix a source defect on `main`, then publish a new version.
-
-The workflow checks live `main` again immediately before publication. That observation establishes the release order: a `main` push accepted afterward is a later candidate and starts its own serialized release run. The tag and `release-coordination` branch update are one atomic Git transaction.
-
-The internal `release-coordination` branch serializes release-tag creation. It points to a synthetic commit that records the latest tag object and its source commit. Different tags produce different coordination commits, so Git checks the branch lease even when two attempts target the same source. It is mutable coordination state, not a release version. CircleCI ignores pushes to that branch. Don't edit it. Existing-tag recovery reconstructs a missing branch from the verified immutable tag graph, but stops on a conflicting value.
-
-### Release production versions
-
-After the first release, each push to `main` recalculates the next version from commits after the latest production tag. The highest matching change controls the bump:
+Every push to `main` runs the GitHub `Release` workflow. It calculates the next
+semantic version from Conventional Commits after the latest production tag.
+The highest matching change controls the bump:
 
 | Bump | Conventional Commit input |
 | --- | --- |
@@ -249,306 +260,208 @@ After the first release, each push to `main` recalculates the next version from 
 | Patch | `fix:`, `perf:`, `refactor:`, `deps:`, `revert:`, `build(deps):`, `chore(deps):`, or a Git-generated revert subject |
 | None | Other commit types, or a current commit containing `[skip release]` or `[release skip]` |
 
-The workflow doesn't write a version to the repository. It derives `vMAJOR.MINOR.PATCH` from immutable tags, so the release version remains metadata.
+The workflow does not write a version into repository files. It derives
+`vMAJOR.MINOR.PATCH` from immutable tags, so release versions remain metadata.
 
-You can dispatch the workflow without a `tag` input to retry planning on the current `main` commit. Capture that commit first so the dispatch can't race with another merge:
+The release workflow creates the annotated tag and GitHub Release first. Its
+final job then waits for the CircleCI tag pipeline at the exact tag and commit.
+After every required job passes, GitHub packs the immutable tag source and
+publishes the matching `MAJOR.MINOR.PATCH` Orb version. It reads the registry
+source afterward and fails if the bytes differ from the candidate.
+
+Watch the automatic run:
+
+```bash
+MAIN_SHA="$(
+  gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
+    --jq '.object.sha'
+)"
+RUN_IDS="$(
+  gh run list \
+    --repo vexcalibur-dev/vexcalibur-orb \
+    --workflow release.yml \
+    --event push \
+    --branch main \
+    --commit "${MAIN_SHA}" \
+    --limit 100 \
+    --json attempt,databaseId,event,headBranch \
+    --jq \
+      '.[] | select(
+        .attempt == 1 and
+        .event == "push" and
+        .headBranch == "main"
+      ) | .databaseId'
+)"
+test "$(printf '%s\n' "${RUN_IDS}" | sed '/^$/d' | wc -l)" -eq 1
+gh run watch "${RUN_IDS}" \
+  --repo vexcalibur-dev/vexcalibur-orb \
+  --exit-status
+```
+
+The workflow must finish with `success`. Verify the public registry version:
+
+```bash
+circleci orb info vexcalibur-dev/vexcalibur@MAJOR.MINOR.PATCH
+circleci orb source vexcalibur-dev/vexcalibur@MAJOR.MINOR.PATCH \
+  > /tmp/vexcalibur-orb-registry.yml
+```
+
+Replace `MAJOR.MINOR.PATCH` with the release version. The metadata should name
+that version, and the source command should write a nonempty YAML file.
+
+## Dispatch or recover a release
+
+Use a manual dispatch when an automatic workflow stopped after creating release
+metadata, or when you need to publish an existing immutable tag. Capture the
+current tooling commit first:
+
+For this one-time migration, squash-merge the publishing-workflow pull request
+with this exact subject:
+
+```text
+ci: publish Orbs from GitHub Actions [skip release]
+```
+
+The marker suppresses the release run triggered by the merge. The non-releasing
+`ci:` type also prevents this commit from creating a delayed version bump after
+recovery. Do not use `fix:`, `feat:`, or another releasing type for the squash
+commit. Recover `v0.1.1` before merging any later releasing commit.
 
 ```bash
 TOOLING_SHA="$(
   gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
     --jq '.object.sha'
 )"
-DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-RUN_URL="$(gh workflow run release.yml \
-  --repo vexcalibur-dev/vexcalibur-orb \
-  --ref main \
-  --field expected_source_sha="${TOOLING_SHA}")"
+
+RUN_URL="$(
+  gh workflow run release.yml \
+    --repo vexcalibur-dev/vexcalibur-orb \
+    --ref main \
+    --field expected_source_sha="${TOOLING_SHA}" \
+    --field tag=v0.1.1
+)"
+if [[ ! "${RUN_URL}" =~ ^https://github\.com/vexcalibur-dev/vexcalibur-orb/actions/runs/([0-9]+)$ ]]; then
+  printf 'GitHub CLI did not return the created run URL: %s\n' "${RUN_URL}" >&2
+  exit 1
+fi
+RUN_ID="${BASH_REMATCH[1]}"
 ```
 
-### Watch a manual release dispatch
-
-The preceding command records the dispatch time and captures the URL returned by `gh workflow run`. Resolve and watch that exact run:
+The GitHub CLI returns the URL for the dispatch it created. Stop when it does
+not return that URL; do not substitute the latest run from the repository.
+Watch the captured run:
 
 ```bash
-RUN_ID=""
-if [[ "${RUN_URL}" =~ /actions/runs/([0-9]+)(\?.*)?$ ]]; then
-  RUN_ID="${BASH_REMATCH[1]}"
-else
-  for _attempt in {1..12}; do
-    mapfile -t matching_runs < <(
-      gh run list \
-        --repo vexcalibur-dev/vexcalibur-orb \
-        --workflow release.yml \
-        --event workflow_dispatch \
-        --commit "${TOOLING_SHA}" \
-        --created ">=${DISPATCHED_AT}" \
-        --json databaseId \
-        --limit 20 \
-        --jq '.[].databaseId'
-    )
-    if (( ${#matching_runs[@]} == 1 )); then
-      RUN_ID="${matching_runs[0]}"
-      break
-    fi
-    if (( ${#matching_runs[@]} > 1 )); then
-      echo "More than one matching manual release run was found." >&2
-      exit 1
-    fi
-    sleep 5
-  done
-fi
-[[ "${RUN_ID}" =~ ^[0-9]+$ ]]
-gh run watch \
+gh run watch "${RUN_ID}" \
   --repo vexcalibur-dev/vexcalibur-orb \
-  --exit-status \
-  "${RUN_ID}"
+  --exit-status
+
 test "$(
-  gh run view \
+  gh run view "${RUN_ID}" \
     --repo vexcalibur-dev/vexcalibur-orb \
     --json jobs \
-    --jq '.jobs[] | select(.name == "Publish GitHub Release") | .conclusion' \
-    "${RUN_ID}"
+    --jq '.jobs[] | select(.name == "Publish CircleCI Orb") | .conclusion'
 )" = success
 ```
 
-The event, commit, dispatch time, and returned URL distinguish this run from an automatic push run for the same commit. The final check rejects a successful workflow that skipped publication because no releasable commit was present. CircleCI registry publication may still be running.
+The final command must exit with status `0`. That job packs the immutable tag,
+reads the published registry source back, and compares its bytes with the
+candidate. Its success is the exact-source proof required before you remove the
+legacy release compatibility path. The legacy CircleCI credential was already
+removed before merge; do not recreate it during recovery.
 
-### Verify GitHub and CircleCI publication
+Omit `tag` to recalculate a release from current `main`. Supply a tag only when
+it already identifies the immutable source you intend to recover. The workflow
+uses current release tooling but checks out, packs, and publishes the tag's own
+source commit.
 
-After the GitHub release workflow succeeds, set `EXPECTED_RELEASE_SHA` to the candidate source commit. Use `TOOLING_SHA` for a normal manual dispatch. For recovery, keep `RELEASE_TAG` set to the recovered tag and use its existing immutable target as `EXPECTED_RELEASE_SHA`. When `RELEASE_TAG` is unset, the commands resolve it from the latest immutable GitHub Release:
+The `v0.1.1` recovery path recognizes the legacy CircleCI pipeline whose
+publisher was denied. It still requires every credentialless test, pack, and
+source job to pass. This exception comes from the tagged configuration, not a
+hard-coded release number, and does not apply to current releases.
 
-```bash
-if [[ -z "${RELEASE_TAG:-}" ]]; then
-  RELEASE_TAG="$(
-    gh api repos/vexcalibur-dev/vexcalibur-orb/releases/latest --jq '.tag_name'
-  )"
-fi
-TAG_OBJECT_SHA="$(
-  gh api "repos/vexcalibur-dev/vexcalibur-orb/git/ref/tags/${RELEASE_TAG}" \
-    --jq '.object.sha'
-)"
-RELEASE_SHA="$(
-  gh api "repos/vexcalibur-dev/vexcalibur-orb/git/tags/${TAG_OBJECT_SHA}" \
-    --jq '.object.sha'
-)"
-test "${RELEASE_SHA}" = "${EXPECTED_RELEASE_SHA:?set the expected source commit}"
-```
+Current publication accepts only the original webhook workflow attempts. It
+rejects API-triggered pipelines and every rerun, including SSH-derived reruns.
+If an exact CircleCI workflow fails for a current release, fix the problem on
+`main` and publish a new version. A source or configuration defect cannot be
+repaired within an immutable tag.
 
-The remaining commands require `gh`, the CircleCI CLI, and a personal CircleCI API token exported as `CIRCLECI_OPERATOR_TOKEN`. Do not use the `CIRCLE_TOKEN` value from the publishing context.
+GitHub workflow reruns also stop before any publication job. Start a new manual
+dispatch when you recover an existing release; don't rerun a failed publisher.
 
-1. Check the protected GitHub Release projection:
+### Finish the first production recovery
 
-   ```bash
-   (
-     set -euo pipefail
-     RELEASE_JSON="$(mktemp)"
-     trap 'rm -f "${RELEASE_JSON}"' EXIT
+The first successful registry publication changes the project's public status.
+Complete these documentation updates in a follow-up pull request after the
+registry source has been verified:
 
-     APP_SLUG=vexcalibur-dev-automation
-     BOT_NAME="${APP_SLUG}[bot]"
-     BOT_USER_ID="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq '.id')"
-     BOT_EMAIL="${BOT_USER_ID}+${BOT_NAME}@users.noreply.github.com"
-     EXPECTED_MAIN_SHA="$(
-       gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
-         --jq '.object.sha'
-     )"
-     git fetch --prune --tags origin main
-     test "$(git rev-parse refs/remotes/origin/main)" = "${EXPECTED_MAIN_SHA}"
-     gh api \
-       "repos/vexcalibur-dev/vexcalibur-orb/releases/tags/${RELEASE_TAG}" \
-       >"${RELEASE_JSON}"
-     python -I scripts/release.py verify-published-release \
-       --release-json "${RELEASE_JSON}" \
-       --tag "${RELEASE_TAG}" \
-       --commit "${RELEASE_SHA}" \
-       --main-commit "${EXPECTED_MAIN_SHA}" \
-       --expected-author "${BOT_NAME}" \
-       --expected-tagger-name "${BOT_NAME}" \
-       --expected-tagger-email "${BOT_EMAIL}"
-   )
-   ```
+1. Replace the pending-release notice in `README.md` with the published Orb
+   version and remove the warning that the checked-in examples cannot run.
+2. Add the published version to the supported-version table in `SECURITY.md`.
+3. Search `README.md`, `SECURITY.md`, and `docs/` for `pending`, `no production`,
+   and the recovered version. Remove any statement that became false when the
+   registry accepted the Orb.
 
-   The verifier checks the complete immutable tag graph, including release order and predecessor metadata. It also requires the automation App's tagger identity and exact canonical tag annotation. It regenerates the protected notes, then checks the tag, commit, title, body, release author, immutable state, draft and prerelease flags, and empty asset list. The command names the verified tag and exits with status `0` when every field matches.
+Do not merge that status update before the registry commands under
+[Release a production version](#release-a-production-version) succeed. GitHub
+release metadata alone is not proof that the Orb exists.
 
-2. Find the CircleCI tag pipeline and inspect its workflows:
+## Rotate the CircleCI token
+
+CircleCI sends expiration reminders for personal tokens. Rotate before the
+deadline:
+
+1. Create a replacement personal token for the same CircleCI identity. Keep the
+   old value in your credential manager during verification.
+2. From any directory, replace the GitHub environment secret:
 
    ```bash
-   test -n "${CIRCLECI_OPERATOR_TOKEN:-}"
-   PIPELINE_ID="$(
-     python -I scripts/circleci_release_status.py \
-       pipeline-id "${RELEASE_TAG}" "${RELEASE_SHA}"
-   )"
-   python -I scripts/circleci_release_status.py \
-     verify-pipeline "${PIPELINE_ID}"
+   REPOSITORY=vexcalibur-dev/vexcalibur-orb
+   ENVIRONMENT=circleci-orb-publishing
+
+   gh secret set CIRCLE_TOKEN \
+     --repo "${REPOSITORY}" \
+     --env "${ENVIRONMENT}"
    ```
 
-   The helper follows every API page and selects the highest-numbered pipeline for the exact tag, repository, and release commit. It evaluates only the newest attempt for each workflow name. It requires the `lint-pack` and `test-deploy` workflows plus every acceptance, packing, source, and publication job in `test-deploy`. The final command prints tab-separated workflow and job names, `success`, and IDs before it exits with status `0`. Rerun it while a workflow is still running. A nonzero status after CircleCI finishes means the production orb was not verified as published.
+   Enter the replacement token at the prompt. The command should finish without
+   printing the secret.
+3. Merge a tested change and watch that exact `Publish development Orb` run.
+4. Verify its commit-specific registry reference and `dev:alpha` with the
+   commands in [Publish a development version](#publish-a-development-version).
+5. Delete the old token in CircleCI after both checks pass.
 
-3. Confirm the public registry version and compare its source with the release commit:
+If publication fails because of authentication, run the command from step 2
+again and enter the old value. Inspect the failed run before trying another
+replacement. Never delete the old token before the new token passes registry
+verification.
 
-   ```bash
-   ORB_VERSION="${RELEASE_TAG#v}"
-   circleci orb info "vexcalibur-dev/vexcalibur@${ORB_VERSION}"
+## Troubleshoot publication
 
-   (
-     set -euo pipefail
-     PACKED_SOURCE="$(mktemp)"
-     REGISTRY_SOURCE="$(mktemp)"
-     WORKTREE="${PACKED_SOURCE}.worktree"
-     cleanup() {
-       git worktree remove --force "${WORKTREE}" >/dev/null 2>&1 || true
-       rm -f "${PACKED_SOURCE}" "${REGISTRY_SOURCE}"
-     }
-     trap cleanup EXIT
-
-     git worktree add --detach "${WORKTREE}" "${RELEASE_SHA}"
-     circleci orb pack --skip-update-check \
-       "${WORKTREE}/src" > "${PACKED_SOURCE}"
-     circleci orb source --skip-update-check \
-       "vexcalibur-dev/vexcalibur@${ORB_VERSION}" > "${REGISTRY_SOURCE}"
-     python - "${PACKED_SOURCE}" "${REGISTRY_SOURCE}" <<'PY'
-   from pathlib import Path
-   import sys
-
-   packed = Path(sys.argv[1]).read_bytes()
-   registry = Path(sys.argv[2]).read_bytes()
-   if registry not in (packed, packed + b"\n"):
-       raise SystemExit("registry source differs from the release commit")
-   PY
-   )
-   ```
-
-   The metadata command should identify the production version. The source comparison produces no output and exits with status `0`.
-
-### Recover a failed release
-
-Use the GitHub recovery path when the annotated tag exists but the GitHub Release is missing. Set `RELEASE_TAG` to that exact tag and dispatch it again:
-
-```bash
-TOOLING_SHA="$(
-  gh api repos/vexcalibur-dev/vexcalibur-orb/git/ref/heads/main \
-    --jq '.object.sha'
-)"
-DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-RUN_URL="$(gh workflow run release.yml \
-  --repo vexcalibur-dev/vexcalibur-orb \
-  --ref main \
-  --field expected_source_sha="${TOOLING_SHA}" \
-  --field tag="${RELEASE_TAG}")"
-```
-
-Resolve and watch this dispatch with [Watch a manual release dispatch](#watch-a-manual-release-dispatch). Keep `TOOLING_SHA`, `DISPATCHED_AT`, and `RUN_URL` from the recovery command; the run's tooling commit is current `main`, while the recovered release commit remains the immutable tag target.
-
-The workflow reads that tag target and verifies its annotation before it recreates missing release metadata. The annotation records the predecessor, release-note format, and note digest, so recovery does not silently rewrite an older release. The workflow stops if the existing tag or GitHub Release conflicts with the expected commit, author, notes, or immutable state.
-
-If recovery reports that no retained CI run passed for the tag's commit, run CI at the existing tag first. Then repeat the release dispatch:
-
-```bash
-gh workflow run ci.yml \
-  --repo vexcalibur-dev/vexcalibur-orb \
-  --ref "${RELEASE_TAG}"
-```
-
-If GitHub created the tag but CircleCI has no matching pipeline, a repository administrator can use the [GitHub repository webhook delivery API](https://docs.github.com/en/rest/repos/webhooks) to redeliver the exact recorded tag webhook. Create a temporary fine-grained GitHub token for `vexcalibur-dev/vexcalibur-orb` with repository **Webhooks: read and write** permission. Enter it without echo, then run the recovery with `RELEASE_TAG` and `RELEASE_SHA` set by the verification procedure:
-
-```bash
-(
-set -euo pipefail
-read -rsp 'Temporary GitHub webhook token: ' GH_TOKEN
-printf '\n'
-export GH_TOKEN
-trap 'unset GH_TOKEN' EXIT
-
-CIRCLECI_HOOK_ID="$(
-  gh api repos/vexcalibur-dev/vexcalibur-orb/hooks \
-    --jq '.[] | select(
-      .active == true and .config.url == "https://circleci.com/hooks/github"
-    ) | .id'
-)"
-[[ "${CIRCLECI_HOOK_ID}" =~ ^[0-9]+$ ]]
-
-DELIVERY_ID=""
-while read -r candidate_id; do
-  delivery="$(
-    gh api \
-      "repos/vexcalibur-dev/vexcalibur-orb/hooks/${CIRCLECI_HOOK_ID}/deliveries/${candidate_id}" \
-      --jq '[.request.payload.ref, .request.payload.after] | @tsv'
-  )"
-  if [[ "${delivery}" == "$(printf 'refs/tags/%s\t%s' \
-    "${RELEASE_TAG}" "${RELEASE_SHA}")" ]]; then
-    DELIVERY_ID="${candidate_id}"
-    break
-  fi
-done < <(
-  gh api \
-    "repos/vexcalibur-dev/vexcalibur-orb/hooks/${CIRCLECI_HOOK_ID}/deliveries" \
-    --paginate \
-    --jq '.[] | select(.event == "push") | .id'
-)
-[[ "${DELIVERY_ID}" =~ ^[0-9]+$ ]]
-gh api \
-  --method POST \
-  "repos/vexcalibur-dev/vexcalibur-orb/hooks/${CIRCLECI_HOOK_ID}/deliveries/${DELIVERY_ID}/attempts"
-)
-```
-
-The push payload's [`after` field](https://docs.github.com/en/webhooks/webhook-events-and-payloads#push) is the commit at the pushed tag, so it must equal `RELEASE_SHA`. The final command returns no body when GitHub accepts the redelivery. Revoke the temporary token after you unset it. Then repeat the CircleCI `pipeline-id` and `verify-pipeline` commands until the webhook pipeline appears.
-
-GitHub [retains webhook deliveries for three days](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks). If the exact delivery is missing or too old to redeliver, stop: don't move the tag or start CircleCI with API-supplied configuration. Repair the webhook, commit the fix with a patch-level Conventional Commit, and let the next immutable version publish from `main`. This preserves the failed tag as source history instead of pretending its registry version exists.
-
-Use the CircleCI recovery path only when the GitHub tag and Release are correct and a transient failure interrupted the newest CircleCI tag workflow. A source or configuration defect cannot be repaired within an immutable tag. Fix that defect on `main` with a patch-level Conventional Commit and let the release workflow publish the next version.
-
-For a transient failure, rerun the original `test-deploy` workflow, not a later attempt. CircleCI can preserve SSH access when you rerun an SSH-derived workflow, which the publishing context correctly rejects. A full rerun of the original workflow re-establishes the evidence for every required test and publication job in one attempt.
-
-The production job checks the registry before it publishes. If the version already exists, the job succeeds only when its registry source matches the packed release, allowing recovery after a lost publish response or duplicate webhook. A mismatch stops the job because a production orb version cannot be replaced.
-
-```bash
-test -n "${CIRCLECI_OPERATOR_TOKEN:-}"
-ORIGINAL_WORKFLOW_ID="$(
-  python -I scripts/circleci_release_status.py \
-    original-release-workflow-id "${PIPELINE_ID}"
-)"
-RERUN_WORKFLOW_ID="$(
-  python -I scripts/circleci_release_status.py \
-    rerun-workflow "${ORIGINAL_WORKFLOW_ID}"
-)"
-python -I scripts/circleci_release_status.py \
-  wait-workflow "${RERUN_WORKFLOW_ID}"
-python -I scripts/circleci_release_status.py \
-  verify-pipeline "${PIPELINE_ID}"
-```
-
-The first helper selects the earliest `test-deploy` workflow from the webhook pipeline, before any SSH-derived reruns. The second starts a complete rerun from that attempt, and `wait-workflow` waits up to 30 minutes for the exact returned workflow. The final command selects the newest attempt for each workflow name, so an older failure does not hide a successful rerun. Both verification commands must finish with `success`. This reuses the original webhook pipeline, so the context expression still rejects SSH reruns and API-supplied configuration. Don't start a replacement production pipeline with local or API-supplied config.
-
-Unset the personal token after verification or recovery:
-
-```bash
-unset CIRCLECI_OPERATOR_TOKEN
-```
-
-There is no rollback that mutates a published version. If the registry contains a bad orb, fix the source on `main` with a releasable Conventional Commit and publish the next version.
-
-### Complete the first registry release documentation
-
-After the first registry version passes both verification procedures, update these public entrypoints in one follow-up pull request:
-
-- Replace the pending production status in `README.md` with the verified registry reference.
-- Replace the pending release row in `SECURITY.md` with the supported version.
-- Replace the planned-version language in `docs/reference/orb.md` with the published version and tested support contract.
-- Link the GitHub Release and CircleCI registry entry where each helps the reader verify provenance.
-
-Run `python -m unittest discover -s tests` and `scripts/validate-circleci.sh`, then apply the Green Thumb prose pass and Scorched Earth documentation review before merging that follow-up. This repository does not generate a documentation site or have an automated external-link checker.
-
-## Diagnose common failures
-
-| Symptom | Check |
+| Symptom | Action |
 | --- | --- |
-| Setup workflow doesn't continue | Confirm the project is connected and dynamic config is enabled. Then inspect `orb-tools/continue`. |
-| `No Orb Publishing Token detected` | Confirm the `orb-publishing` context is attached, its variable is named `CIRCLE_TOKEN`, and the project can access the context. |
-| Packed orb SHA-256 does not match | Do not retry publication unchanged. Inspect the `pack-dev` or `pack-release` checksum artifact and workspace-producing job, then rerun from a trusted commit after finding the cause. |
-| Registry says the namespace or orb doesn't exist | Complete the one-time namespace and orb creation with the Vexcalibur CircleCI organization. |
-| `release-source-check` fails | Confirm the tag commit is reachable from `origin/main`. Don't weaken or bypass the check. |
-| GitHub release waits for CI | Confirm `ci.yml` has a retained successful run for the exact release commit. For recovery, dispatch CI at the existing tag. |
-| Release policy validation fails | Stop before publishing. Check owner-enforced immutable releases, both release-tag rulesets, the App installation, and the [signed policy files](../reference/release-policy.md#signed-attestation) against the live repository settings. |
-| CircleCI context is denied | Confirm the pipeline came from the immutable tag webhook, SSH is disabled, and the config source is not API supplied. Then check the project and expression restrictions. |
-| Production publish says the version exists | Treat the registry version as immutable and publish a new patch version if a correction is needed. |
+| GitHub reports that `CIRCLE_TOKEN` is missing | Confirm that the secret exists in the `circleci-orb-publishing` environment and that the job names that environment. |
+| The environment rejects the job's ref | Keep the single `main` branch policy. Dispatch release recovery with `--ref main`; don't broaden the environment. |
+| No exact CircleCI pipeline appears | Check the CircleCI GitHub integration and webhook delivery for the tag or `main` push. Don't start a substitute pipeline with unreviewed API configuration. |
+| CircleCI evidence reports unexpected jobs | Review the CircleCI configuration and the evidence allowlist together. Publication fails closed when the tested job set changes. |
+| Registry source differs from the candidate | Stop. Production versions cannot be replaced. For development aliases, inspect the concurrent publication history before retrying. |
+| A production version already exists | The workflow succeeds only when the existing registry source matches the immutable release source. Publish a new patch version for corrections. |
+
+If no CircleCI tag pipeline exists, confirm that the exact tag has no pipeline
+before you redeliver anything. In the GitHub repository, open **Settings**, then
+**Webhooks**, and select the CircleCI webhook. Find the delivery whose payload
+names `refs/tags/TAG`, confirm that its `after` value is the immutable tag's
+commit, and use **Redeliver**. GitHub retains webhook deliveries for three days;
+after that window, stop and investigate with CircleCI rather than recreating the
+tag or starting an API pipeline. The verifier rejects both replacement tags and
+API-triggered substitutes.
+
+Wait for the redelivered pipeline to finish, then start a new manual release
+dispatch. Do not rerun the failed GitHub workflow. GitHub's
+[webhook redelivery guide](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)
+shows the repository controls and retention limit.
+
+The [production release policy](../reference/release-policy.md) defines the
+controls that the workflow enforces. The [runtime and trust explanation](../explanation/runtime-and-trust.md)
+describes why GitHub owns the credential while CircleCI remains independent
+test evidence.

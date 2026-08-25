@@ -1,0 +1,109 @@
+---
+name: Publish development Orb
+
+"on":
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+concurrency:
+  group: development-orb-publishing
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CIRCLECI_CLI_TELEMETRY_OPTOUT: "true"
+  CIRCLECI_CLI_VERSION: "0.1.38646"
+  # Public GitHub release-asset digest, not a credential.
+  CIRCLECI_CLI_CHECKSUMS_SHA256: "3e7359dfc2c3634e21c2f210588a114d24613bf39dbf8b216ed7b4cb3a9e401a" # pragma: allowlist secret
+
+jobs:
+  publish:
+    name: Publish development Orb
+    if: >-
+      github.run_attempt == 1 &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: circleci-orb-publishing
+      deployment: false
+    steps:
+      - name: Checkout validated main source
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Require current main source
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          current_main_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+          test "${current_main_sha}" = "${EXPECTED_SHA}"
+          test "${GITHUB_SHA}" = "${EXPECTED_SHA}"
+
+      - name: Set up Python
+        # actions/setup-python v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14.5"
+
+      - name: Install CircleCI CLI
+        env:
+          CIRCLECI_CLI_INSTALL_DIR: ${{ runner.temp }}/circleci-cli
+        run: |
+          set -euo pipefail
+          scripts/install-circleci-cli.sh
+          echo "${CIRCLECI_CLI_INSTALL_DIR}" >> "${GITHUB_PATH}"
+
+      - name: Require exact CircleCI main evidence
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: >-
+          python -I scripts/circleci_release_status.py
+          wait-main-pipeline "${RELEASE_SHA}"
+
+      - name: Pack validated Orb source
+        run: scripts/pack-orb.sh
+
+      - name: Publish commit development reference
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+          ORB_DEVELOPMENT_REFERENCE: >-
+            dev:${{ github.event.workflow_run.head_sha }}
+        run: scripts/publish-development-orb.sh
+
+      - name: Publish alpha from current main
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          ORB_DEVELOPMENT_REFERENCE: dev:alpha
+        run: |
+          set -euo pipefail
+
+          current_main_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+          test "${current_main_sha}" = "${EXPECTED_SHA}"
+          scripts/publish-development-orb.sh

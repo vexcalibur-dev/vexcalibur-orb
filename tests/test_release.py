@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -30,6 +31,10 @@ import release_policy  # noqa: E402
 FORMAT_ONE_NOTES_SHA256 = (
     "68c03b1f669fcf8fef25b0630898fc29"  # pragma: allowlist secret
     "5e98d6caec9d45ef2cf364a98ffc0bab"  # pragma: allowlist secret
+)
+FORMAT_TWO_NOTES_SHA256 = (
+    "3c570e327839b1a32113d48763393f0a"  # pragma: allowlist secret
+    "c00e47dd2253499d2847beb6d450ca23"  # pragma: allowlist secret
 )
 
 
@@ -107,6 +112,20 @@ class ReleasePlanningTests(GitRepositoryTest):
         self.assertEqual(plan.operation, "skip")
         self.assertIn("suppression", plan.reason)
 
+    def test_orb_publisher_migration_never_accumulates_a_release_bump(self) -> None:
+        annotate(self.repo, "v0.1.1", self.initial_commit)
+        commit(
+            self.repo,
+            "ci: publish Orbs from GitHub Actions [skip release]",
+            "publisher.txt",
+        )
+        self.assertEqual(self.plan().operation, "skip")
+
+        commit(self.repo, "docs: record migration state", "status.txt")
+        plan = self.plan()
+        self.assertEqual(plan.operation, "skip")
+        self.assertIn("no releasable", plan.reason)
+
     def test_existing_tag_enters_recovery(self) -> None:
         annotate(self.repo, "v0.1.0", self.initial_commit)
 
@@ -174,7 +193,7 @@ class ReleasePlanningTests(GitRepositoryTest):
             ("missing field", lambda value: value.pop("notes_sha256")),
             ("extra field", lambda value: value.update({"extra": True})),
             ("schema", lambda value: value.update({"schema_version": 2})),
-            ("format", lambda value: value.update({"notes_format": "2"})),
+            ("format", lambda value: value.update({"notes_format": "3"})),
             ("digest", lambda value: value.update({"notes_sha256": "bad"})),
             ("predecessor", lambda value: value.update({"previous_tag": "v0.9.0"})),
         )
@@ -504,6 +523,23 @@ class ReleaseProjectionTests(unittest.TestCase):
             FORMAT_ONE_NOTES_SHA256,
         )
 
+    def test_format_two_release_notes_match_the_golden_contract(self) -> None:
+        expected = (ROOT / "tests/fixtures/release-notes-format-2.md").read_text(
+            encoding="utf-8"
+        )
+        rendered = release.release_notes(
+            tag="v0.1.0",
+            commit="a" * 40,
+            previous_tag="",
+            notes_format="2",
+        )
+
+        self.assertEqual(rendered, expected)
+        self.assertEqual(
+            hashlib.sha256(rendered.encode()).hexdigest(),
+            FORMAT_TWO_NOTES_SHA256,
+        )
+
     def test_every_supported_note_format_has_a_retained_renderer(self) -> None:
         self.assertEqual(
             set(release.NOTES_RENDERERS),
@@ -764,6 +800,81 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertNotIn("permissions", job)
 
+    def test_workflow_reruns_cannot_reach_release_jobs(self) -> None:
+        for name, job in self.jobs.items():
+            with self.subTest(job=name):
+                self.assertIn("github.run_attempt == 1", job["if"])
+
+        wait = self.step("wait-for-ci", "Wait for tooling and release CI")["run"]
+        self.assertIn("--json attempt,conclusion,databaseId,event,headBranch", wait)
+        self.assertIn('run["attempt"] == 1', wait)
+        self.assertIn('run["event"] == "push"', wait)
+        self.assertIn('run["headBranch"] == "main"', wait)
+
+        decision_code_match = re.search(
+            r"python -c '\n(?P<code>.*?)\n\s*' <<< \"\$\{run_json\}\"",
+            wait,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(decision_code_match)
+        decision_code = decision_code_match.group("code")
+        cases = (
+            (
+                "nonqualifying",
+                [{"attempt": 2, "event": "push", "headBranch": "main"}],
+                "waiting",
+            ),
+            (
+                "in-progress",
+                [
+                    {
+                        "attempt": 1,
+                        "event": "push",
+                        "headBranch": "main",
+                        "status": "in_progress",
+                        "conclusion": "",
+                    }
+                ],
+                "waiting",
+            ),
+            (
+                "failed",
+                [
+                    {
+                        "attempt": 1,
+                        "event": "push",
+                        "headBranch": "main",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ],
+                "failure",
+            ),
+            (
+                "successful",
+                [
+                    {
+                        "attempt": 1,
+                        "event": "push",
+                        "headBranch": "main",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ],
+                "success",
+            ),
+        )
+        for label, runs, expected in cases:
+            with self.subTest(label=label):
+                result = subprocess.run(
+                    [sys.executable, "-c", decision_code],
+                    input=json.dumps(runs),
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_all_actions_are_pinned_to_full_commits(self) -> None:
         pattern = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
         references = [
@@ -894,6 +1005,99 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--target "${RELEASE_SHA}"', creator)
         self.assertIn("scripts/release.py verify-release", creator)
         self.assertIn("A concurrent publisher created", creator)
+
+    def test_orb_publication_is_bound_to_release_source_and_evidence(self) -> None:
+        publisher = self.jobs["publish-orb"]
+        names = [step["name"] for step in publisher["steps"]]
+        tooling = self.step("publish-orb", "Checkout release tooling")
+        source = self.step("publish-orb", "Checkout immutable Orb source")
+        evidence = self.step(
+            "publish-orb", "Require exact CircleCI release evidence"
+        )
+        pack = self.step("publish-orb", "Pack immutable Orb source")
+        publish = self.step("publish-orb", "Publish or verify immutable Orb")
+
+        self.assertEqual(
+            publisher["environment"],
+            {"name": "circleci-orb-publishing", "deployment": "false"},
+        )
+        self.assertEqual(
+            publisher["needs"], ["resolve", "publish-release"]
+        )
+        self.assertEqual(tooling["with"]["ref"], "${{ github.sha }}")
+        self.assertEqual(
+            source["with"]["ref"], "${{ needs.resolve.outputs.sha }}"
+        )
+        self.assertEqual(
+            evidence["env"]["RELEASE_SHA"], "${{ needs.resolve.outputs.sha }}"
+        )
+        self.assertEqual(
+            evidence["env"]["RELEASE_TAG"], "${{ needs.resolve.outputs.tag }}"
+        )
+        self.assertIn("wait-tag-pipeline", evidence["run"])
+        self.assertIn(
+            "../release-source/.circleci/test-deploy.yml", evidence["run"]
+        )
+        self.assertNotIn("v0.1.1", evidence["run"])
+        self.assertEqual(
+            pack["env"]["ORB_SOURCE_DIRECTORY"], "../release-source/src"
+        )
+        self.assertEqual(
+            publish["env"]["ORB_RELEASE_TAG"],
+            "${{ needs.resolve.outputs.tag }}",
+        )
+        self.assertLess(
+            names.index("Require exact CircleCI release evidence"),
+            names.index("Pack immutable Orb source"),
+        )
+        self.assertLess(
+            names.index("Pack immutable Orb source"),
+            names.index("Publish or verify immutable Orb"),
+        )
+
+    def test_orb_credential_is_checked_before_release_metadata(self) -> None:
+        verifier = self.jobs["verify-orb-publisher"]
+        self.assertEqual(
+            verifier["environment"],
+            {"name": "circleci-orb-publishing", "deployment": "false"},
+        )
+        self.assertEqual(verifier["needs"], ["resolve", "wait-for-ci"])
+        preflight = self.step(
+            "verify-orb-publisher", "Require CircleCI publishing token"
+        )
+        self.assertEqual(
+            preflight["env"]["CIRCLE_TOKEN"],
+            "${{ secrets.CIRCLE_TOKEN }}",
+        )
+        self.assertEqual(preflight["run"], 'test -n "${CIRCLE_TOKEN}"')
+        for token, expected_status in (("", 1), ("publisher-token", 0)):
+            with self.subTest(token=bool(token)):
+                result = subprocess.run(
+                    ["bash", "-c", preflight["run"]],
+                    env={"CIRCLE_TOKEN": token},
+                    check=False,
+                )
+                self.assertEqual(result.returncode, expected_status)
+        self.assertIn(
+            "verify-orb-publisher", self.jobs["publish-release"]["needs"]
+        )
+
+    def test_orb_secret_is_confined_to_evidence_and_publication(self) -> None:
+        secret_steps = [
+            (job_name, step["name"])
+            for job_name, job in self.jobs.items()
+            for step in job["steps"]
+            if "secrets.CIRCLE_TOKEN" in str(step)
+        ]
+
+        self.assertEqual(
+            secret_steps,
+            [
+                ("verify-orb-publisher", "Require CircleCI publishing token"),
+                ("publish-orb", "Publish or verify immutable Orb"),
+            ],
+        )
+        self.assertEqual(str(self.workflow).count("secrets.CIRCLE_TOKEN"), 2)
 
 
 if __name__ == "__main__":

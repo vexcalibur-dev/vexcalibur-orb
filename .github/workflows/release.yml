@@ -25,10 +25,16 @@ permissions:
   actions: read
   contents: read
 
+env:
+  CIRCLECI_CLI_TELEMETRY_OPTOUT: "true"
+  CIRCLECI_CLI_VERSION: "0.1.38646"
+  # Public GitHub release-asset digest, not a credential.
+  CIRCLECI_CLI_CHECKSUMS_SHA256: "3e7359dfc2c3634e21c2f210588a114d24613bf39dbf8b216ed7b4cb3a9e401a" # pragma: allowlist secret
+
 jobs:
   resolve:
     name: Resolve release candidate
-    if: github.ref == 'refs/heads/main'
+    if: github.run_attempt == 1 && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       operation: ${{ steps.release.outputs.operation }}
@@ -92,7 +98,9 @@ jobs:
     name: Wait for CI
     runs-on: ubuntu-latest
     needs: resolve
-    if: needs.resolve.outputs.operation != 'skip'
+    if: >-
+      github.run_attempt == 1 &&
+      needs.resolve.outputs.operation != 'skip'
     steps:
       - name: Wait for tooling and release CI
         env:
@@ -114,7 +122,7 @@ jobs:
                   --repo "${GITHUB_REPOSITORY}" \
                   --workflow ci.yml \
                   --commit "${sha}" \
-                  --json conclusion,databaseId,status,url \
+                  --json attempt,conclusion,databaseId,event,headBranch,status,url \
                   --limit 1000
               )"
               if [[ "${run_json}" == "[]" ]]; then
@@ -128,8 +136,16 @@ jobs:
           import json
           import sys
 
-          runs = json.load(sys.stdin)
-          if any(
+          runs = [
+              run
+              for run in json.load(sys.stdin)
+              if run["attempt"] == 1
+              and run["event"] == "push"
+              and run["headBranch"] == "main"
+          ]
+          if not runs:
+              print("waiting")
+          elif any(
               run["status"] == "completed" and run["conclusion"] == "success"
               for run in runs
           ):
@@ -162,13 +178,33 @@ jobs:
             wait_for_ci "${RELEASE_SHA}" "release-target"
           fi
 
+  verify-orb-publisher:
+    name: Verify Orb publisher
+    runs-on: ubuntu-latest
+    environment:
+      name: circleci-orb-publishing
+      deployment: false
+    needs:
+      - resolve
+      - wait-for-ci
+    if: >-
+      github.run_attempt == 1 &&
+      needs.resolve.outputs.operation != 'skip'
+    steps:
+      - name: Require CircleCI publishing token
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+        run: test -n "${CIRCLE_TOKEN}"
+
   prepare-release-notes:
     name: Prepare release notes
     runs-on: ubuntu-latest
     needs:
       - resolve
       - wait-for-ci
-    if: needs.resolve.outputs.operation != 'skip'
+    if: >-
+      github.run_attempt == 1 &&
+      needs.resolve.outputs.operation != 'skip'
     outputs:
       artifact_name: ${{ steps.artifact.outputs.name }}
       notes_sha256: ${{ steps.notes.outputs.sha256 }}
@@ -235,7 +271,10 @@ jobs:
     needs:
       - resolve
       - prepare-release-notes
-    if: needs.resolve.outputs.operation != 'skip'
+      - verify-orb-publisher
+    if: >-
+      github.run_attempt == 1 &&
+      needs.resolve.outputs.operation != 'skip'
     steps:
       - name: Checkout
         # actions/checkout v7.0.0
@@ -549,3 +588,80 @@ jobs:
           fi
           cat "${latest_error}" >&2
           exit 1
+
+  publish-orb:
+    name: Publish CircleCI Orb
+    runs-on: ubuntu-latest
+    environment:
+      name: circleci-orb-publishing
+      deployment: false
+    needs:
+      - resolve
+      - publish-release
+    if: >-
+      github.run_attempt == 1 &&
+      needs.resolve.outputs.operation != 'skip'
+    steps:
+      - name: Checkout release tooling
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          path: release-tooling
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Checkout immutable Orb source
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          path: release-source
+          persist-credentials: false
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Set up Python
+        # actions/setup-python v6.3.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14.5"
+
+      - name: Install CircleCI CLI
+        working-directory: release-tooling
+        env:
+          CIRCLECI_CLI_INSTALL_DIR: ${{ runner.temp }}/circleci-cli
+        run: |
+          set -euo pipefail
+          scripts/install-circleci-cli.sh
+          echo "${CIRCLECI_CLI_INSTALL_DIR}" >> "${GITHUB_PATH}"
+
+      - name: Require exact CircleCI release evidence
+        working-directory: release-tooling
+        env:
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          compatibility=()
+          if grep -Fq \
+            'name: publish-release' \
+            ../release-source/.circleci/test-deploy.yml; then
+            compatibility+=(--allow-legacy-publisher-denial)
+          fi
+          python -I scripts/circleci_release_status.py \
+            wait-tag-pipeline \
+            "${RELEASE_TAG}" \
+            "${RELEASE_SHA}" \
+            "${compatibility[@]}"
+
+      - name: Pack immutable Orb source
+        working-directory: release-tooling
+        env:
+          ORB_SOURCE_DIRECTORY: ../release-source/src
+        run: scripts/pack-orb.sh
+
+      - name: Publish or verify immutable Orb
+        working-directory: release-tooling
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+          ORB_RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: scripts/publish-production-orb.sh
