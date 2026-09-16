@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -129,6 +131,34 @@ class PublishedConsumerTests(unittest.TestCase):
             },
         )
 
+    def test_entrypoint_uses_only_the_fixed_fixture_directory(self) -> None:
+        output = self.directory / "artifacts/published-consumer"
+        output.mkdir(parents=True)
+        for path in self.directory.glob("*.json"):
+            (output / path.name).write_bytes(path.read_bytes())
+        command = [sys.executable, str(ROOT / "scripts/check-published-consumer.py")]
+        environment = {"CONSUMER_PACKAGE_SPEC": self.package, "CONSUMER_ORB": self.orb}
+        result = subprocess.run(
+            command,
+            cwd=self.directory,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((output / "consumer-versions.json").is_file())
+        unexpected = subprocess.run(
+            command + ["../outside"],
+            cwd=self.directory,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(unexpected.returncode, 0)
+        self.assertIn("accepts no command-line arguments", unexpected.stderr)
+
     def test_rejects_changed_document_for_each_format(self) -> None:
         for output_format in consumer.FORMATS:
             with self.subTest(output_format=output_format):
@@ -230,6 +260,9 @@ class PublishedConsumerTests(unittest.TestCase):
         self.assertEqual(
             verification["environment"]["CONSUMER_PACKAGE_SPEC"],
             "<< parameters.package_spec >>",
+        )
+        self.assertEqual(
+            verification["command"], "python scripts/check-published-consumer.py"
         )
         self.assertRegex(
             job["parameters"]["package_spec"]["default"],

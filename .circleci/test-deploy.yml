@@ -116,9 +116,7 @@ commands:
           environment:
             CONSUMER_PACKAGE_SPEC: << parameters.package_spec >>
             CONSUMER_ORB: *released-orb
-          command: >-
-            python scripts/check-published-consumer.py
-            artifacts/published-consumer
+          command: python scripts/check-published-consumer.py
       - store_artifacts:
           path: artifacts/published-consumer
 

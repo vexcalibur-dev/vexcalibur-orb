@@ -135,8 +135,10 @@ def verify(directory: Path, package_spec: str, orb_reference: str) -> None:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) != 1:
+        raise SystemExit("This fixture helper accepts no command-line arguments.")
     verify(
-        Path(sys.argv[1]),
+        Path("artifacts/published-consumer"),
         os.environ["CONSUMER_PACKAGE_SPEC"],
         os.environ["CONSUMER_ORB"],
     )
