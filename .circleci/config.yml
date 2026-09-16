@@ -2,10 +2,6 @@
 version: 2.1
 setup: true
 
-orbs:
-  orb-tools: circleci/orb-tools@12.3.3
-  shellcheck: circleci/shellcheck@3.2.0
-
 executors:
   pinned-circleci-cli:
     docker:
@@ -13,17 +9,21 @@ executors:
       - image: circleci/circleci-cli:0.1.38646@sha256:2a2081377367e051fb247752ac17f753f7675f5d36e334c24da73034848f0926
 
 jobs:
-  shellcheck:
-    docker:
-      # yamllint disable-line rule:line-length
-      - image: cimg/base:2026.07@sha256:6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3  # pragma: allowlist secret
+  validate-orb:
+    executor: pinned-circleci-cli
     steps:
       - checkout
-      - shellcheck/install:
-          version: "0.11.0"
       - run:
-          name: Validate shell
-          command: shellcheck scripts/*.sh src/scripts/*.sh
+          name: Pack and validate Orb
+          command: scripts/pack-orb.sh
+
+  continue:
+    executor: pinned-circleci-cli
+    steps:
+      - checkout
+      - run:
+          name: Continue with validated Orb
+          command: scripts/continue-circleci.sh
 
 filters: &filters
   branches:
@@ -34,24 +34,9 @@ filters: &filters
 workflows:
   lint-pack:
     jobs:
-      - orb-tools/lint:
+      - validate-orb:
           filters: *filters
-      - orb-tools/pack:
-          executor: pinned-circleci-cli
-          filters: *filters
-      - orb-tools/review:
-          orb_name: vexcalibur
-          filters: *filters
-      - shellcheck:
-          filters: *filters
-      - orb-tools/continue:
-          executor: pinned-circleci-cli
-          pipeline_number: << pipeline.number >>
-          vcs_type: github
-          orb_name: vexcalibur
+      - continue:
           requires:
-            - orb-tools/lint
-            - orb-tools/pack
-            - orb-tools/review
-            - shellcheck
+            - validate-orb
           filters: *filters

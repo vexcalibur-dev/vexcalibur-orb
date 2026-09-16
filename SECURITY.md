@@ -40,4 +40,4 @@ The orb never adds `--allow-public-osv`. Without that flag, Vexcalibur refuses t
 
 The [runtime and trust-boundary explanation](docs/explanation/runtime-and-trust.md) describes the installation and network boundaries in more detail.
 
-The [production release policy](docs/reference/release-policy.md) records the append-only tag, signed-attestation, and restricted CircleCI publication controls.
+The [production release policy](docs/reference/release-policy.md) records the append-only tag, signed attestation, branch-restricted GitHub credential, and independent CircleCI evidence controls.

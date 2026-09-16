@@ -17,10 +17,11 @@ inspect the interface, not as a production pin. Do not import a development
 orb into a project that has environment variables, contexts, private source,
 or other credentials.
 
-The immutable GitHub release `v0.1.0` failed its production-only CircleCI
-review before publication, so no `0.1.0` orb exists in the registry. The fix
-will publish `vexcalibur-dev/vexcalibur@0.1.1`; that reference won't resolve
-until the release pipeline succeeds.
+The immutable GitHub release `v0.1.1` already exists. Its credentialless
+CircleCI checks passed, but the legacy publisher was denied before the registry
+accepted the Orb. The current migration recovers that existing tag without
+moving or replacing it. `vexcalibur-dev/vexcalibur@0.1.1` won't resolve until
+the recovery workflow succeeds.
 
 The public release will be a community orb. A CircleCI organization administrator must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before that organization can import it.
 
@@ -103,9 +104,10 @@ python -m unittest discover -s tests
 scripts/validate-circleci.sh
 ```
 
-The checks should exit with status `0`. The last command packs the orb, resolves
-both CircleCI configurations, checks the publication executor pin and
-checksum-step order, and validates the packed and processed configurations.
+The checks should exit with status `0`. The last command packs the Orb, resolves
+both CircleCI configurations, verifies the pinned pack executors, rejects
+CircleCI publishing credentials and jobs, and validates the packed and
+processed configurations.
 
 ## Documentation
 

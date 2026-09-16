@@ -39,16 +39,28 @@ setup_config = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 test_deploy = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
 inline_config = Path(sys.argv[4])
 
-continue_orb_names = [
-    job["orb-tools/continue"]["orb_name"]
-    for workflow in setup_config.get("workflows", {}).values()
-    for job in workflow.get("jobs", [])
-    if isinstance(job, dict) and "orb-tools/continue" in job
+filters = {
+    "branches": {"ignore": "release-coordination"},
+    "tags": {"only": "/.*/"},
+}
+expected_setup_jobs = [
+    {"validate-orb": {"filters": filters}},
+    {
+        "continue": {
+            "requires": ["validate-orb"],
+            "filters": filters,
+        }
+    },
 ]
-if len(continue_orb_names) != 1:
-    raise SystemExit(f"expected exactly one orb-tools/continue job, found {len(continue_orb_names)}")
+if (
+    setup_config.get("workflows", {}).get("lint-pack", {}).get("jobs")
+    != expected_setup_jobs
+):
+    raise SystemExit("setup workflow does not have the exact validation handoff")
+if test_deploy.get("orbs") != {"vexcalibur": {}}:
+    raise SystemExit("continuation config must contain one local vexcalibur Orb")
 
-test_deploy["orbs"][continue_orb_names[0]] = packed_orb
+test_deploy["orbs"]["vexcalibur"] = packed_orb
 inline_config.write_text(yaml.safe_dump(test_deploy, sort_keys=False), encoding="utf-8")
 PY
 
@@ -57,14 +69,26 @@ circleci config process --skip-update-check "$inline_config" \
   > "$processed_inline_config"
 circleci config validate --skip-update-check "$processed_inline_config"
 
-"$python_bin" - "$processed_setup_config" "$processed_inline_config" .circleci/test-deploy.yml <<'PY'
+"$python_bin" - \
+  "$processed_setup_config" \
+  "$processed_inline_config" \
+  .circleci/config.yml \
+  .circleci/test-deploy.yml <<'PY'
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+sys.path.insert(0, "scripts")
+
+from circleci_config_policy import (  # noqa: E402
+    CircleCIConfigPolicyError,
+    reject_publishing_capabilities,
+)
 
 PINNED_CIRCLECI_CLI_IMAGE = (
     "circleci/circleci-cli:0.1.38646@sha256:"
@@ -72,8 +96,15 @@ PINNED_CIRCLECI_CLI_IMAGE = (
 )
 
 
-def load_jobs(path: str) -> dict[str, dict[str, Any]]:
+def load_document(path: str) -> dict[str, Any]:
     document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise SystemExit(f"CircleCI config is not a mapping: {path}")
+    return document
+
+
+def load_jobs(path: str) -> dict[str, dict[str, Any]]:
+    document = load_document(path)
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         raise SystemExit(f"processed config has no jobs mapping: {path}")
@@ -88,116 +119,57 @@ def require_pinned_executor(job_name: str, job: dict[str, Any]) -> None:
         )
 
 
-def run_step_names(job: dict[str, Any]) -> list[str]:
-    return [
-        step["run"].get("name", "")
-        for step in job.get("steps", [])
-        if isinstance(step, dict) and isinstance(step.get("run"), dict)
-    ]
+def require_digest_pinned_images(jobs: dict[str, dict[str, Any]]) -> None:
+    for job_name, job in jobs.items():
+        docker = job.get("docker")
+        if not isinstance(docker, list) or not docker:
+            raise SystemExit(f"{job_name} does not use a Docker executor")
+        for image in docker:
+            reference = image.get("image") if isinstance(image, dict) else None
+            if not isinstance(reference, str) or re.search(
+                r"@sha256:[0-9a-f]{64}$", reference
+            ) is None:
+                raise SystemExit(
+                    f"{job_name} uses an image without a digest: {reference!r}"
+                )
 
 
 setup_jobs = load_jobs(sys.argv[1])
-for job_name in ("orb-tools/pack", "orb-tools/continue"):
+require_digest_pinned_images(setup_jobs)
+for job_name in ("validate-orb", "continue"):
     require_pinned_executor(job_name, setup_jobs[job_name])
 
 deployment_jobs = load_jobs(sys.argv[2])
-for job_name in ("pack-dev", "pack-release"):
-    job = deployment_jobs[job_name]
-    require_pinned_executor(job_name, job)
-    names = run_step_names(job)
-    if "Record packed orb SHA-256" not in names:
-        raise SystemExit(f"{job_name} did not retain the checksum-recording step")
+require_digest_pinned_images(deployment_jobs)
+pack_release = deployment_jobs["pack-release"]
+require_pinned_executor("pack-release", pack_release)
 
-publish_dev_job = deployment_jobs["publish-dev"]
-require_pinned_executor("publish-dev", publish_dev_job)
-publish_dev_names = run_step_names(publish_dev_job)
-try:
-    verify_index = publish_dev_names.index("Verify packed orb SHA-256")
-    publish_index = publish_dev_names.index("Publishing Orb Release")
-except ValueError as error:
-    raise SystemExit("publish-dev is missing an integrity or publish step") from error
-if verify_index >= publish_index:
-    raise SystemExit("publish-dev publishes before verifying the packed orb")
+for path in sys.argv[1:]:
+    try:
+        reject_publishing_capabilities(load_document(path), path=path)
+    except CircleCIConfigPolicyError as error:
+        raise SystemExit(str(error)) from error
 
-publish_release_job = deployment_jobs["publish-release"]
-require_pinned_executor("publish-release", publish_release_job)
-publish_release_names = run_step_names(publish_release_job)
-try:
-    verify_index = publish_release_names.index("Verify packed orb SHA-256")
-    publish_index = publish_release_names.index("Publish or verify production orb")
-except ValueError as error:
-    raise SystemExit(
-        "publish-release is missing an integrity or idempotent publish step"
-    ) from error
-if verify_index >= publish_index:
-    raise SystemExit("publish-release publishes before verifying the packed orb")
-
-test_deploy = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
+test_deploy = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 workflow_jobs = test_deploy.get("workflows", {}).get("test-deploy", {}).get("jobs", [])
 if not isinstance(workflow_jobs, list):
     raise SystemExit("test-deploy workflow has no jobs list")
-
-if any("approve-dev-publish" in job for job in workflow_jobs if isinstance(job, dict)):
-    raise SystemExit("development publication must not require a manual approval job")
-
-publish_dev = next(
+pack_invocation = next(
     (
-        job["orb-tools/publish"]
+        job["pack-release"]
         for job in workflow_jobs
         if isinstance(job, dict)
-        and isinstance(job.get("orb-tools/publish"), dict)
-        and job["orb-tools/publish"].get("name") == "publish-dev"
+        and isinstance(job.get("pack-release"), dict)
     ),
     None,
 )
-if not isinstance(publish_dev, dict):
-    raise SystemExit("test-deploy workflow has no publish-dev job")
-
-expected_dependencies = {
-    "pack-dev",
-    "command-help-test",
-    "format-output-test",
-    "job-help-test",
-}
-if set(publish_dev.get("requires", [])) != expected_dependencies:
-    raise SystemExit("publish-dev must require every credentialless development check")
-
-if publish_dev.get("context") != "orb-publishing":
-    raise SystemExit("publish-dev must use the restricted orb-publishing context")
-
-filters = publish_dev.get("filters", {})
-if filters.get("branches", {}).get("only") != "main":
-    raise SystemExit("publish-dev must run only from main")
-if filters.get("tags", {}).get("ignore") != "/.*/":
-    raise SystemExit("publish-dev must not run from tags")
-
-publish_release = next(
-    (
-        job["publish-production-orb"]
-        for job in workflow_jobs
-        if isinstance(job, dict)
-        and isinstance(job.get("publish-production-orb"), dict)
-        and job["publish-production-orb"].get("name") == "publish-release"
-    ),
-    None,
-)
-if not isinstance(publish_release, dict):
-    raise SystemExit("test-deploy workflow has no idempotent publish-release job")
-if publish_release.get("context") != "orb-publishing":
-    raise SystemExit("publish-release must use the restricted orb-publishing context")
-if set(publish_release.get("requires", [])) != {
-    "pack-release",
-    "command-help-test",
-    "format-output-test",
-    "job-help-test",
-    "release-source-check",
-}:
-    raise SystemExit("publish-release must require every credentialless release check")
-release_filters = publish_release.get("filters", {})
+if not isinstance(pack_invocation, dict):
+    raise SystemExit("test-deploy workflow has no release pack job")
+release_filters = pack_invocation.get("filters", {})
 if release_filters.get("branches", {}).get("ignore") != "/.*/":
-    raise SystemExit("publish-release must ignore every branch")
+    raise SystemExit("pack-release must ignore every branch")
 if release_filters.get("tags", {}).get("only") != (
     "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
 ):
-    raise SystemExit("publish-release must require an exact production tag")
+    raise SystemExit("pack-release must require an exact production tag")
 PY

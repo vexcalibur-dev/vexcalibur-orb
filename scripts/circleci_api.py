@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from http.client import IncompleteRead
 import json
 import re
 from typing import Any, NoReturn
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
@@ -26,54 +28,40 @@ PAGE_TOKEN_QUERY = frozenset({"page-token"})
 class EndpointPolicy:
     """One authorized CircleCI API operation."""
 
-    method: str
     endpoint: re.Pattern[str]
     paginated: bool = False
-    required_query: frozenset[str] = frozenset()
     allowed_query: frozenset[str] = frozenset()
 
 
 ENDPOINT_POLICIES = (
-    EndpointPolicy("GET", re.compile(r"^me/collaborations$")),
-    EndpointPolicy("GET", re.compile(rf"^project/{re.escape(PROJECT_SLUG)}$")),
     EndpointPolicy(
-        "GET",
         re.compile(rf"^project/{re.escape(PROJECT_SLUG)}/pipeline$"),
         paginated=True,
-        allowed_query=PAGE_TOKEN_QUERY,
+        allowed_query=PAGE_TOKEN_QUERY | {"branch"},
     ),
     EndpointPolicy(
-        "GET",
-        re.compile(r"^context$"),
-        paginated=True,
-        required_query=frozenset({"owner-id"}),
-        allowed_query=frozenset({"owner-id", "page-token"}),
-    ),
-    EndpointPolicy(
-        "GET",
-        re.compile(rf"^context/{UUID_FRAGMENT}/restrictions$"),
-        paginated=True,
-        allowed_query=PAGE_TOKEN_QUERY,
-    ),
-    EndpointPolicy(
-        "GET",
         re.compile(rf"^pipeline/{UUID_FRAGMENT}/workflow$"),
         paginated=True,
         allowed_query=PAGE_TOKEN_QUERY,
     ),
-    EndpointPolicy("GET", re.compile(rf"^workflow/{UUID_FRAGMENT}$")),
     EndpointPolicy(
-        "GET",
         re.compile(rf"^workflow/{UUID_FRAGMENT}/job$"),
         paginated=True,
         allowed_query=PAGE_TOKEN_QUERY,
     ),
-    EndpointPolicy("POST", re.compile(rf"^workflow/{UUID_FRAGMENT}/rerun$")),
 )
 
 
 class CircleCIError(RuntimeError):
     """CircleCI returned malformed data or a release check failed."""
+
+
+class CircleCIRequestError(CircleCIError):
+    """A CircleCI API request failed before a valid response arrived."""
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def fail(message: str) -> NoReturn:
@@ -122,7 +110,7 @@ def decode_json(data: bytes) -> Any:
 
 
 class RejectRedirects(HTTPRedirectHandler):
-    """Prevent an authenticated request from changing origins."""
+    """Prevent a CircleCI API request from changing origins."""
 
     def redirect_request(
         self,
@@ -134,31 +122,26 @@ class RejectRedirects(HTTPRedirectHandler):
         newurl: str,
     ) -> NoReturn:
         del req, fp, code, msg, headers, newurl
-        fail("CircleCI API redirected an authenticated request")
+        fail("CircleCI API redirected a request")
 
 
 class Client:
-    """Authenticated client for the fixed CircleCI API origin."""
+    """Strict client for the fixed CircleCI API origin."""
 
-    def __init__(self, token: str) -> None:
-        if not token or any(character.isspace() for character in token):
-            fail("CircleCI operator token is missing or malformed")
-        self._token = token
+    def __init__(self) -> None:
         self._opener = build_opener(RejectRedirects())
 
     def _request_json(
         self,
         endpoint: str,
         *,
-        method: str,
-        payload: dict[str, Any] | None = None,
         query: dict[str, str] | None = None,
         paginated: bool = False,
     ) -> Any:
         matches = [
             policy
             for policy in ENDPOINT_POLICIES
-            if policy.method == method and policy.endpoint.fullmatch(endpoint)
+            if policy.endpoint.fullmatch(endpoint)
         ]
         if len(matches) != 1:
             fail("CircleCI API endpoint is not authorized")
@@ -168,41 +151,36 @@ class Client:
         query_keys = frozenset(query or {})
         if not query_keys <= policy.allowed_query:
             fail("CircleCI API query is not authorized")
-        if not policy.required_query <= query_keys:
-            fail("CircleCI API query is missing required parameters")
-        if query is not None and "owner-id" in query:
-            require_uuid(query["owner-id"], label="CircleCI organization ID")
+        if query is not None and "branch" in query and query["branch"] != "main":
+            fail("CircleCI API branch query must select main")
         url = f"{API_ROOT}/{endpoint}"
         if query:
             url = f"{url}?{urlencode(query)}"
-        data = None
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {self._token}",
-        }
-        if payload is not None:
-            data = json.dumps(payload, separators=(",", ":")).encode()
-            headers["Content-Type"] = "application/json"
+        headers = {"Accept": "application/json"}
         request = Request(
             url,
-            data=data,
             headers=headers,
-            method=method,
+            method="GET",
         )
         try:
             with self._opener.open(request, timeout=30) as response:
                 if response.geturl() != url:
                     fail("CircleCI API response came from an unexpected URL")
                 return decode_json(response.read())
+        except HTTPError as error:
+            error.close()
+            raise CircleCIRequestError(
+                f"CircleCI API request failed with HTTP {error.code}",
+                status=error.code,
+            ) from error
+        except IncompleteRead as error:
+            raise CircleCIRequestError(
+                "CircleCI API response ended before the declared content length"
+            ) from error
         except OSError as error:
-            fail(f"CircleCI API request failed: {error}")
-            raise AssertionError from error
-
-    def fetch_json(self, endpoint: str) -> Any:
-        return self._request_json(endpoint, method="GET")
-
-    def post_json(self, endpoint: str, payload: dict[str, Any]) -> Any:
-        return self._request_json(endpoint, method="POST", payload=payload)
+            raise CircleCIRequestError(
+                f"CircleCI API request failed: {error}"
+            ) from error
 
     def fetch_pages(
         self, endpoint: str, *, query: dict[str, str] | None = None
@@ -216,7 +194,6 @@ class Client:
                 page_query["page-token"] = page_token
             document = self._request_json(
                 endpoint,
-                method="GET",
                 query=page_query,
                 paginated=True,
             )

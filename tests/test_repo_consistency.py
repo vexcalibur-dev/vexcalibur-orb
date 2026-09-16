@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -10,6 +11,13 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import circleci_release_status as release_status  # noqa: E402
+from circleci_config_policy import (  # noqa: E402
+    CircleCIConfigPolicyError,
+    reject_publishing_capabilities,
+)
 PACKAGE_SPEC_PATTERN = re.compile(r"vexcalibur==\d+(?:\.\d+){1,2}(?:\.post\d+)?")
 PACKAGE_SPEC_FILES = [
     "README.md",
@@ -82,26 +90,24 @@ class RepositoryConsistencyTests(unittest.TestCase):
             setup_python["with"]["python-version"], tool_versions["python"]
         )
 
-        circleci_configuration = yaml.safe_load(
-            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
+        setup_tools = next(
+            step
+            for step in ci_workflow["jobs"]["quality"]["steps"]
+            if step.get("name") == "Install workflow tools"
+        )
+        self.assertEqual(setup_tools["with"]["install_args"], "shellcheck")
+        validate_shell = next(
+            step
+            for step in ci_workflow["jobs"]["quality"]["steps"]
+            if step.get("name") == "Validate shell"
         )
         self.assertEqual(
-            circleci_configuration["jobs"]["shellcheck"]["docker"],
-            [
-                {
-                    "image": (
-                        "cimg/base:2026.07@sha256:"
-                        "6b53042171c5eec83d8a9b14206b8483195dde2f3265a85a3d18fe4b778329f3"  # pragma: allowlist secret
-                    )
-                }
-            ],
+            validate_shell["run"],
+            "bash -n scripts/*.sh\n"
+            "bash -n src/scripts/*.sh\n"
+            "shellcheck scripts/*.sh\n"
+            "shellcheck src/scripts/*.sh\n",
         )
-        shellcheck_install = next(
-            step["shellcheck/install"]
-            for step in circleci_configuration["jobs"]["shellcheck"]["steps"]
-            if isinstance(step, dict) and "shellcheck/install" in step
-        )
-        self.assertEqual(shellcheck_install["version"], tool_versions["shellcheck"])
 
         job_source = yaml.safe_load(
             (REPO_ROOT / "src/jobs/run.yml").read_text(encoding="utf-8")
@@ -149,30 +155,63 @@ class RepositoryConsistencyTests(unittest.TestCase):
             "release-coordination",
         )
 
-    def test_orb_review_uses_the_local_example_key(self) -> None:
-        configuration = yaml.safe_load(
-            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
-        )
-        review = next(
-            job["orb-tools/review"]
-            for job in configuration["workflows"]["lint-pack"]["jobs"]
-            if isinstance(job, dict) and "orb-tools/review" in job
-        )
-
-        orb_name = review["orb_name"]
-        self.assertEqual(orb_name, "vexcalibur")
-
-        for example_path in sorted((REPO_ROOT / "src/examples").glob("*.yml")):
-            with self.subTest(example=example_path.name):
-                example = yaml.safe_load(example_path.read_text(encoding="utf-8"))
-                self.assertIn(orb_name, example["usage"]["orbs"])
-
     def test_examples_use_the_planned_production_orb(self) -> None:
         for example_path in sorted((REPO_ROOT / "src/examples").glob("*.yml")):
             with self.subTest(example=example_path.name):
                 example = yaml.safe_load(example_path.read_text(encoding="utf-8"))
                 reference = example["usage"]["orbs"]["vexcalibur"]
                 self.assertEqual(reference, PLANNED_PRODUCTION_ORB_REFERENCE)
+
+    def test_orb_source_meets_registry_quality_contract(self) -> None:
+        metadata = yaml.safe_load(
+            (REPO_ROOT / "src/@orb.yml").read_text(encoding="utf-8")
+        )
+        self.assertGreaterEqual(len(metadata["description"].strip()), 64)
+        self.assertEqual(
+            metadata["display"],
+            {
+                "home_url": "https://github.com/vexcalibur-dev/vexcalibur",
+                "source_url": "https://github.com/vexcalibur-dev/vexcalibur-orb",
+            },
+        )
+
+        component_paths = sorted(
+            path
+            for directory in ("commands", "executors", "examples", "jobs")
+            for path in (REPO_ROOT / "src" / directory).glob("*.yml")
+        )
+        self.assertTrue(component_paths)
+        self.assertTrue(any("examples" in path.parts for path in component_paths))
+
+        def verify_component_contract(value: Any) -> None:
+            if isinstance(value, dict):
+                parameters = value.get("parameters")
+                if isinstance(parameters, dict):
+                    for name, definition in parameters.items():
+                        self.assertRegex(name, r"^[a-z][a-z0-9_]*$")
+                        default = definition.get("default")
+                        if isinstance(default, str):
+                            self.assertNotIn("$", default)
+                if "run" in value:
+                    self.assertIsInstance(value["run"], dict)
+                    self.assertTrue(value["run"].get("name", "").strip())
+                    command = value["run"].get("command", "")
+                    self.assertIsInstance(command, str)
+                    if len(command) > 64:
+                        self.assertIn("<<include(", command)
+                for child in value.values():
+                    verify_component_contract(child)
+            elif isinstance(value, list):
+                for child in value:
+                    verify_component_contract(child)
+
+        for path in component_paths:
+            with self.subTest(component=path.relative_to(REPO_ROOT)):
+                self.assertNotIn("-", path.stem)
+                component = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertIsInstance(component.get("description"), str)
+                self.assertTrue(component["description"].strip())
+                verify_component_contract(component)
 
     def test_scorecard_workflow_is_pinned_and_least_privilege(self) -> None:
         workflow = yaml.load(
@@ -307,7 +346,16 @@ class RepositoryConsistencyTests(unittest.TestCase):
                 self.assertIsInstance(json.load(stream), dict)
 
     def test_ci_uses_verified_circleci_cli_archive_installer(self) -> None:
-        workflow = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow_paths = (
+            ".github/workflows/ci.yml",
+            ".github/workflows/publish-development.yml",
+            ".github/workflows/release.yml",
+        )
+        workflows = {
+            path: (REPO_ROOT / path).read_text(encoding="utf-8")
+            for path in workflow_paths
+        }
+        workflow = workflows[".github/workflows/ci.yml"]
         installer = (REPO_ROOT / "scripts/install-circleci-cli.sh").read_text(
             encoding="utf-8"
         )
@@ -331,6 +379,17 @@ class RepositoryConsistencyTests(unittest.TestCase):
             self.fail("CircleCI CLI version and checksum pins must both be present")
         self.assertTrue(CIRCLECI_CLI_VERSION_PATTERN.fullmatch(version_match.group(1)))
         self.assertTrue(SHA256_PATTERN.fullmatch(checksum_match.group(1)))
+        for path, content in workflows.items():
+            with self.subTest(workflow=path):
+                self.assertIn(
+                    f'CIRCLECI_CLI_VERSION: "{version_match.group(1)}"', content
+                )
+                self.assertIn(
+                    "CIRCLECI_CLI_CHECKSUMS_SHA256: "
+                    f'"{checksum_match.group(1)}"',
+                    content,
+                )
+                self.assertIn("scripts/install-circleci-cli.sh", content)
 
         tool_versions = (REPO_ROOT / ".tool-versions").read_text(encoding="utf-8")
         local_version_match = re.search(
@@ -347,7 +406,7 @@ class RepositoryConsistencyTests(unittest.TestCase):
             document = yaml.safe_load(
                 (REPO_ROOT / relative_path).read_text(encoding="utf-8")
             )
-            for name, reference in document["orbs"].items():
+            for name, reference in document.get("orbs", {}).items():
                 if isinstance(reference, str):
                     references[f"{relative_path}:{name}"] = reference
                     self.assertRegex(reference, EXACT_ORB_REFERENCE_PATTERN)
@@ -356,18 +415,14 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
         self.assertEqual(
             references,
-            {
-                ".circleci/config.yml:orb-tools": "circleci/orb-tools@12.3.3",
-                ".circleci/config.yml:shellcheck": "circleci/shellcheck@3.2.0",
-                ".circleci/test-deploy.yml:orb-tools": ("circleci/orb-tools@12.3.3"),
-            },
+            {},
         )
         self.assertEqual(
             local_orbs,
             {".circleci/test-deploy.yml:vexcalibur": {}},
         )
 
-    def test_orb_publisher_jobs_use_immutable_executor_and_verified_handoff(
+    def test_circleci_jobs_validate_without_a_publishing_credential(
         self,
     ) -> None:
         setup = yaml.safe_load(
@@ -384,74 +439,157 @@ class RepositoryConsistencyTests(unittest.TestCase):
                 {"docker": [{"image": PINNED_CIRCLECI_CLI_IMAGE}]},
             )
 
-        setup_jobs = setup["workflows"]["lint-pack"]["jobs"]
-        for orb_job in ("orb-tools/pack", "orb-tools/continue"):
-            invocation = next(
-                job[orb_job]
-                for job in setup_jobs
-                if isinstance(job, dict) and orb_job in job
+        for job_name in ("validate-orb", "continue"):
+            self.assertEqual(
+                setup["jobs"][job_name]["executor"], "pinned-circleci-cli"
             )
-            self.assertEqual(invocation["executor"], "pinned-circleci-cli")
 
         deployment_jobs = deployment["workflows"]["test-deploy"]["jobs"]
 
-        def named_invocation(name: str) -> tuple[str, dict[str, Any]]:
-            for job in deployment_jobs:
-                if not isinstance(job, dict):
-                    continue
-                orb_job, parameters = next(iter(job.items()))
-                if parameters.get("name") == name:
-                    return orb_job, parameters
-            self.fail(f"workflow job not found: {name}")
+        parameters = next(
+            invocation["pack-release"]
+            for invocation in deployment_jobs
+            if isinstance(invocation, dict) and "pack-release" in invocation
+        )
+        self.assertNotIn("context", parameters)
+        self.assertEqual(
+            deployment["jobs"]["pack-release"]["executor"],
+            "pinned-circleci-cli",
+        )
 
-        for name in ("pack-dev", "pack-release"):
-            orb_job, parameters = named_invocation(name)
-            self.assertEqual(orb_job, "orb-tools/pack")
-            self.assertEqual(parameters["executor"], "pinned-circleci-cli")
-            self.assertFalse(parameters["persist_to_workspace"])
-            self.assertNotIn("context", parameters)
-            self.assertEqual(parameters["post-steps"][0], "record-packed-orb")
-            self.assertEqual(
-                parameters["post-steps"][-1],
-                {
-                    "persist_to_workspace": {
-                        "root": "dist",
-                        "paths": ["orb.yml", "orb.yml.sha256"],
+        reject_publishing_capabilities(setup, path=".circleci/config.yml")
+        reject_publishing_capabilities(
+            deployment, path=".circleci/test-deploy.yml"
+        )
+        for invocation in deployment_jobs:
+            if isinstance(invocation, str):
+                job_name = invocation
+                display_name = invocation
+            else:
+                job_name, job_parameters = next(iter(invocation.items()))
+                display_name = job_parameters.get("name", job_name)
+            self.assertNotIn("publish", job_name)
+            self.assertNotIn("publish", display_name)
+
+    def test_circleci_policy_rejects_any_context_or_orb_publisher(self) -> None:
+        forbidden = (
+            {"workflows": {"build": {"jobs": [{"test": {"context": "renamed"}}]}}},
+            {
+                "jobs": {
+                    "test": {
+                        "steps": [
+                            {
+                                "run": {
+                                    "command": "circleci  orb\n publish orb.yml org/orb@1.0"
+                                }
+                            }
+                        ]
                     }
-                },
-            )
+                }
+            },
+            {
+                "jobs": {
+                    "test": {
+                        "steps": [
+                            {
+                                "run": {
+                                    "command": (
+                                        "cir'cleci' orb publish candidate reference"
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "jobs": {
+                    "test": {
+                        "steps": [
+                            {
+                                "run": {
+                                    "command": (
+                                        "circleci orb \\\npublish candidate reference"
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+        for document in forbidden:
+            with self.subTest(document=document):
+                with self.assertRaises(CircleCIConfigPolicyError):
+                    reject_publishing_capabilities(document, path="test")
 
-        orb_job, parameters = named_invocation("publish-dev")
-        self.assertEqual(orb_job, "orb-tools/publish")
-        self.assertEqual(parameters["executor"], "pinned-circleci-cli")
-        self.assertFalse(parameters["attach_workspace"])
-        self.assertFalse(parameters["enable_pr_comment"])
-        self.assertEqual(parameters["context"], "orb-publishing")
-        self.assertEqual(
-            parameters["pre-steps"],
-            [
-                {"attach_workspace": {"at": "dist"}},
-                "verify-packed-orb",
-            ],
+    def test_circleci_evidence_allowlists_match_the_continuation_config(
+        self,
+    ) -> None:
+        deployment = yaml.safe_load(
+            (REPO_ROOT / ".circleci/test-deploy.yml").read_text(encoding="utf-8")
         )
+        invocations = deployment["workflows"]["test-deploy"]["jobs"]
+        branch_jobs: set[str] = set()
+        tag_jobs: set[str] = set()
+        for invocation in invocations:
+            if isinstance(invocation, str):
+                name = invocation
+                filters: dict[str, Any] = {}
+            else:
+                job_name, parameters = next(iter(invocation.items()))
+                name = parameters.get("name", job_name)
+                filters = parameters.get("filters", {})
+            branches = filters.get("branches", {})
+            tags = filters.get("tags", {})
+            if branches.get("ignore") != "/.*/":
+                branch_jobs.add(name)
+            if tags.get("only") in (
+                "/.*/",
+                "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/",
+            ):
+                tag_jobs.add(name)
 
-        orb_job, parameters = named_invocation("publish-release")
-        self.assertEqual(orb_job, "publish-production-orb")
-        self.assertEqual(parameters["context"], "orb-publishing")
-        release_job = deployment["jobs"]["publish-production-orb"]
-        self.assertEqual(release_job["executor"], "pinned-circleci-cli")
-        self.assertEqual(
-            release_job["steps"][:3],
-            [
-                "checkout",
-                {"attach_workspace": {"at": "dist"}},
-                "verify-packed-orb",
-            ],
+        self.assertEqual(branch_jobs, release_status.REQUIRED_DEVELOPMENT_JOBS)
+        self.assertEqual(tag_jobs, release_status.REQUIRED_RELEASE_JOBS)
+
+        setup = yaml.safe_load(
+            (REPO_ROOT / ".circleci/config.yml").read_text(encoding="utf-8")
         )
-        self.assertEqual(
-            release_job["steps"][3]["run"]["command"],
-            "scripts/publish-production-orb.sh",
-        )
+        setup_jobs = {
+            invocation
+            if isinstance(invocation, str)
+            else next(iter(invocation))
+            for invocation in setup["workflows"]["lint-pack"]["jobs"]
+        }
+        self.assertEqual(setup_jobs, release_status.REQUIRED_SETUP_JOBS)
+
+    def test_circleci_evidence_images_are_digest_pinned(self) -> None:
+        for path in (".circleci/config.yml", ".circleci/test-deploy.yml"):
+            document = yaml.safe_load((REPO_ROOT / path).read_text(encoding="utf-8"))
+            images: list[str] = []
+
+            def collect_images(value: Any) -> None:
+                if isinstance(value, dict):
+                    docker = value.get("docker")
+                    if isinstance(docker, list):
+                        images.extend(
+                            image["image"]
+                            for image in docker
+                            if isinstance(image, dict)
+                            and isinstance(image.get("image"), str)
+                        )
+                    for child in value.values():
+                        collect_images(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect_images(child)
+
+            collect_images(document)
+            self.assertTrue(images, path)
+            for image in images:
+                with self.subTest(path=path, image=image):
+                    self.assertRegex(image, r"@sha256:[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":

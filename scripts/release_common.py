@@ -19,8 +19,8 @@ TAG_PATTERN = re.compile(
 SHA_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 MAX_VERSION_COMPONENT = 999_999
-CURRENT_NOTES_FORMAT = "1"
-SUPPORTED_NOTES_FORMATS = frozenset({CURRENT_NOTES_FORMAT})
+CURRENT_NOTES_FORMAT = "2"
+SUPPORTED_NOTES_FORMATS = frozenset({"1", CURRENT_NOTES_FORMAT})
 
 
 class ReleaseError(RuntimeError):
