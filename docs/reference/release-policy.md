@@ -55,11 +55,11 @@ a push to the current `main` commit. Production publication runs after the
 workflow creates or verifies the immutable GitHub Release. Both paths require
 CircleCI evidence for the exact commit before they pack and publish.
 
-The one-time GitHub publisher migration uses the exact squash subject
+The one-time GitHub publisher migration used the squash subject
 `ci: publish Orbs from GitHub Actions [skip release]`. The marker suppresses its
 immediate release run, while the non-releasing `ci:` type prevents a deferred
-version bump. Recover the existing immutable `v0.1.1` tag before another
-releasing commit reaches `main`.
+version bump. Recovery of the existing immutable `v0.1.1` tag completed on
+2026-09-16. Later releasing commits use the normal version-planning policy.
 
 The personal token has broad CircleCI access and a fixed expiration date. Store
 its expiration with the credential, replace the GitHub environment secret

@@ -10,7 +10,8 @@ Include the affected source or workflow, impact, reproduction steps, and any sug
 
 ## Supported versions
 
-Security fixes currently target the default branch. The registry's
+Security fixes target the default branch and are delivered in new immutable
+production releases. The registry's
 `dev:alpha` reference is mutable development output and is not a supported
 release.
 
@@ -18,9 +19,7 @@ release.
 | --- | --- |
 | Source on `main` | Yes |
 | `dev:alpha` registry reference | No |
-| Production registry releases | None exist |
-
-This table will change when the first versioned orb is published.
+| Production registry release `0.1.1` | Yes |
 
 ## Keep secrets out of orb parameters
 

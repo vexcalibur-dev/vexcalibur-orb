@@ -151,6 +151,11 @@ GitHub does not return the value. The list should contain `CIRCLE_TOKEN`.
 
 ## Decommission the legacy CircleCI credential
 
+This migration completed on 2026-09-16. The old context and token were removed
+before PR #29 merged. Skip this section for the current repository setup;
+retain these steps for auditing or migrating an installation that still uses
+the legacy publisher.
+
 Complete this migration step after GitHub lists the new environment secret and
 before the publishing-workflow pull request merges. The existing
 `orb-publishing` CircleCI context can still authorize the publisher embedded in
@@ -312,20 +317,22 @@ that version, and the source command should write a nonempty YAML file.
 ## Dispatch or recover a release
 
 Use a manual dispatch when an automatic workflow stopped after creating release
-metadata, or when you need to publish an existing immutable tag. Capture the
-current tooling commit first:
+metadata, or when you need to publish an existing immutable tag.
 
-For this one-time migration, squash-merge the publishing-workflow pull request
-with this exact subject:
+The one-time migration in PR #29 used this squash subject:
 
 ```text
 ci: publish Orbs from GitHub Actions [skip release]
 ```
 
-The marker suppresses the release run triggered by the merge. The non-releasing
-`ci:` type also prevents this commit from creating a delayed version bump after
-recovery. Do not use `fix:`, `feat:`, or another releasing type for the squash
-commit. Recover `v0.1.1` before merging any later releasing commit.
+The marker suppressed the release run triggered by the merge. The non-releasing
+`ci:` type prevents this commit from contributing a delayed version bump.
+Recovery of `v0.1.1` completed on 2026-09-16; subsequent releases follow the
+normal Conventional Commit policy.
+
+Capture the current tooling commit, then dispatch recovery. The example uses
+the published `v0.1.1` tag, so it verifies that version without replacing it.
+For another recovery, substitute the existing tag you intend to verify.
 
 ```bash
 TOOLING_SHA="$(
@@ -389,22 +396,15 @@ repaired within an immutable tag.
 GitHub workflow reruns also stop before any publication job. Start a new manual
 dispatch when you recover an existing release; don't rerun a failed publisher.
 
-### Finish the first production recovery
+### Production recovery record
 
-The first successful registry publication changes the project's public status.
-Complete these documentation updates in a follow-up pull request after the
-registry source has been verified:
+The [recovery run on 2026-09-16](https://github.com/vexcalibur-dev/vexcalibur-orb/actions/runs/35147138669)
+published `vexcalibur-dev/vexcalibur@0.1.1` and verified its registry source
+against the immutable tag. The GitHub tag and Release were preserved.
 
-1. Replace the pending-release notice in `README.md` with the published Orb
-   version and remove the warning that the checked-in examples cannot run.
-2. Add the published version to the supported-version table in `SECURITY.md`.
-3. Search `README.md`, `SECURITY.md`, and `docs/` for `pending`, `no production`,
-   and the recovered version. Remove any statement that became false when the
-   registry accepted the Orb.
-
-Do not merge that status update before the registry commands under
-[Release a production version](#release-a-production-version) succeed. GitHub
-release metadata alone is not proof that the Orb exists.
+After future releases, update the README, supported-version table, and Orb
+reference only after registry verification succeeds. GitHub release metadata
+alone is not proof that an Orb exists.
 
 ## Rotate the CircleCI token
 
