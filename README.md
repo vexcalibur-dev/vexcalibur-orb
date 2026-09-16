@@ -109,6 +109,7 @@ processed configurations.
 - [Orb interface reference](docs/reference/orb.md) describes every public parameter and the runner's failure behavior.
 - [Runtime and trust boundaries](docs/explanation/runtime-and-trust.md) explains installation isolation, network access, and credential handling.
 - [Publish the orb](docs/how-to/publish-orb.md) covers maintainer setup, development publication, release, and recovery.
+- [Check a published CLI](docs/how-to/check-published-consumer.md) tests registry components and verifies execution-report artifacts in CircleCI.
 - [Production release policy](docs/reference/release-policy.md) records the GitHub, CircleCI, and signed-attestation controls for versioned publication.
 - [Contributing](CONTRIBUTING.md) explains the source layout and pull request checks.
 - [Security policy](SECURITY.md) explains private vulnerability reporting and secret handling.

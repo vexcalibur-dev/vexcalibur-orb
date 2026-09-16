@@ -415,7 +415,7 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
         self.assertEqual(
             references,
-            {},
+            {".circleci/test-deploy.yml:released": PLANNED_PRODUCTION_ORB_REFERENCE},
         )
         self.assertEqual(
             local_orbs,
