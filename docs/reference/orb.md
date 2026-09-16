@@ -2,17 +2,15 @@
 
 The Vexcalibur orb provides one command, one job, one executor, and four examples. It installs the selected Vexcalibur Python package at run time and invokes the package's `vexcalibur` executable.
 
-The registry provides `vexcalibur-dev/vexcalibur@dev:alpha` for development
-testing. That reference can change after a trusted `main` build. No production
-version is available. The immutable `v0.1.1` GitHub Release exists, and its
-credentialless CircleCI checks passed, but the denied legacy publisher did not
-create the registry version. The current migration recovers that existing tag
-without moving or replacing it. Source examples reference
-`vexcalibur-dev/vexcalibur@0.1.1`, which will not resolve until recovery
-succeeds. Do not import the development reference into a project with
+The production registry provides `vexcalibur-dev/vexcalibur@0.1.1`, matching
+the immutable GitHub tag `v0.1.1`. Source examples import this version.
+
+The registry also provides `vexcalibur-dev/vexcalibur@dev:alpha` for development
+testing. That reference can change after a trusted `main` build.
+Do not import the development reference into a project with
 environment variables, contexts, private source, or other credentials.
 
-The release will be a community orb. CircleCI organizations must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before importing it.
+This is a community orb. CircleCI organizations must [allow uncertified orb use](https://circleci.com/docs/orbs/use/orb-intro/#orb-designation) before importing it.
 
 ## Compatibility and defaults
 
@@ -22,9 +20,9 @@ The release will be a community orb. CircleCI organizations must [allow uncertif
 | Default Vexcalibur package | `vexcalibur==0.3.1` |
 | Default executor image | `cimg/python:3.14.5@sha256:724637b8722b6f7f7199dfae94ba95bbd2cd14978a99d02ae6bd5c7b12c44805` |
 | Development orb reference | `vexcalibur-dev/vexcalibur@dev:alpha` |
-| Pending registry recovery | `0.1.1` |
+| Production orb version | `0.1.1` |
 | VEX formats in generation examples | CycloneDX 1.6 VEX JSON, OpenVEX 0.2.0 JSON, and CSAF 2.0 VEX JSON |
-| Registry home | `https://github.com/vexcalibur-dev/vexcalibur` |
+| Registry home | [CircleCI Orb Registry](https://circleci.com/developer/orbs/orb/vexcalibur-dev/vexcalibur) |
 | Orb source | `https://github.com/vexcalibur-dev/vexcalibur-orb` |
 
 The default Python image includes a digest, so CircleCI resolves the reviewed
@@ -163,7 +161,7 @@ The orb source contains examples that CircleCI can display with a registry relea
 | `generate_csaf` | [`src/examples/generate_csaf.yml`](../../src/examples/generate_csaf.yml) | Requires the caller to provide the shown local SBOM and findings paths. It writes CSAF 2.0 VEX JSON to the filename derived from its tracking ID, stores the file as a CircleCI artifact, and doesn't query OSV. |
 | `query_public_osv` | [`src/examples/query_public_osv.yml`](../../src/examples/query_public_osv.yml) | Queries public OSV for two intentionally public package URLs. It sends those URLs and versions to `https://api.osv.dev`. |
 
-All examples reference the planned `0.1.1` orb release and won't resolve before publication.
+All examples reference the published `0.1.1` orb release.
 
 The OpenVEX example requires an author and at least one local finding. This minimal `security/openvex-findings.json` produces one `under_investigation` statement for the matching SBOM component:
 
