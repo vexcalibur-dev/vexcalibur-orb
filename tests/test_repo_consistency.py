@@ -414,8 +414,12 @@ class RepositoryConsistencyTests(unittest.TestCase):
                     local_orbs[f"{relative_path}:{name}"] = reference
 
         self.assertEqual(
-            references,
-            {},
+            set(references),
+            {".circleci/test-deploy.yml:released"},
+        )
+        self.assertRegex(
+            references[".circleci/test-deploy.yml:released"],
+            r"^vexcalibur-dev/vexcalibur@[0-9]+\.[0-9]+\.[0-9]+$",
         )
         self.assertEqual(
             local_orbs,

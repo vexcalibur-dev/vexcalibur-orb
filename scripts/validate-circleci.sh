@@ -29,6 +29,7 @@ circleci config validate --skip-update-check "$processed_setup_config"
 "$python_bin" - "$packed_orb" .circleci/config.yml .circleci/test-deploy.yml "$inline_config" <<'PY'
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -57,8 +58,13 @@ if (
     != expected_setup_jobs
 ):
     raise SystemExit("setup workflow does not have the exact validation handoff")
-if test_deploy.get("orbs") != {"vexcalibur": {}}:
-    raise SystemExit("continuation config must contain one local vexcalibur Orb")
+orbs = test_deploy.get("orbs", {})
+if set(orbs) != {"vexcalibur", "released"} or orbs["vexcalibur"] != {}:
+    raise SystemExit("continuation config needs local and released Vexcalibur Orbs")
+if not isinstance(orbs["released"], str) or re.fullmatch(
+    r"vexcalibur-dev/vexcalibur@[0-9]+\.[0-9]+\.[0-9]+", orbs["released"]
+) is None:
+    raise SystemExit("consumer Orb must use an exact production registry version")
 
 test_deploy["orbs"]["vexcalibur"] = packed_orb
 inline_config.write_text(yaml.safe_dump(test_deploy, sort_keys=False), encoding="utf-8")

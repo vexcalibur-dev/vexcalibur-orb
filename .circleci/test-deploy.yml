@@ -3,6 +3,7 @@ version: 2.1
 
 orbs:
   vexcalibur: {}
+  released: &released-orb vexcalibur-dev/vexcalibur@0.1.1
 
 executors:
   pinned-circleci-cli:
@@ -19,6 +20,105 @@ release-filters: &release-filters
     ignore: /.*/
   tags:
     only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+commands:
+  registry-consumer:
+    parameters:
+      package_spec:
+        type: string
+        default: vexcalibur==0.7.1
+    steps:
+      - run:
+          name: Prepare consumer artifacts
+          command: mkdir -p artifacts/published-consumer
+      - released/run_vexcalibur:
+          package_spec: << parameters.package_spec >>
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            cyclonedx
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/published-consumer/cyclonedx.json
+            --execution-report
+            artifacts/published-consumer/cyclonedx-report.json
+      - released/run_vexcalibur:
+          package_spec: << parameters.package_spec >>
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            openvex
+            --author
+            Vexcalibur orb acceptance test
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/published-consumer/openvex.json
+            --execution-report
+            artifacts/published-consumer/openvex-report.json
+      - released/run_vexcalibur:
+          package_spec: << parameters.package_spec >>
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            csaf
+            --csaf-document-id
+            CSAF
+            --csaf-document-title
+            Vexcalibur orb acceptance test
+            --csaf-publisher-name
+            Vexcalibur Product Security
+            --csaf-publisher-namespace
+            https://github.com/vexcalibur-dev
+            --csaf-publisher-category
+            vendor
+            --csaf-document-status
+            final
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/published-consumer/csaf.json
+            --execution-report
+            artifacts/published-consumer/csaf-report.json
+      - released/run_vexcalibur:
+          package_spec: << parameters.package_spec >>
+          args: |
+            generate
+            tests/fixtures/cyclonedx-sbom.json
+            --offline
+            --findings-file
+            tests/fixtures/local-findings.json
+            --format
+            spdx3
+            --creator
+            Vexcalibur orb acceptance test
+            --timestamp
+            2099-01-01T00:00:00Z
+            --output
+            artifacts/published-consumer/spdx3.json
+            --execution-report
+            artifacts/published-consumer/spdx3-report.json
+      - run:
+          name: Verify published consumer outputs
+          environment:
+            CONSUMER_PACKAGE_SPEC: << parameters.package_spec >>
+            CONSUMER_ORB: *released-orb
+          command: python scripts/check-published-consumer.py
+      - store_artifacts:
+          path: artifacts/published-consumer
 
 jobs:
   command-help-test:
@@ -170,6 +270,7 @@ jobs:
             PY
       - store_artifacts:
           path: artifacts/acceptance
+      - registry-consumer
 
   release-source-check:
     docker:
