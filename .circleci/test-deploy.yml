@@ -26,7 +26,7 @@ commands:
     parameters:
       package_spec:
         type: string
-        default: vexcalibur==0.7.1
+        default: vexcalibur==0.8.2
     steps:
       - run:
           name: Prepare consumer artifacts
