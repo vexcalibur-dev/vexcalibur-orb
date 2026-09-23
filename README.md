@@ -6,6 +6,12 @@
 
 The Vexcalibur orb runs [Vexcalibur](https://github.com/vexcalibur-dev/vexcalibur) in a CircleCI pipeline. It gives CircleCI users a reusable job, command, and Python executor for Vulnerability Exploitability eXchange (VEX) workflows.
 
+[Documentation](#documentation) |
+[Get started](#use-the-production-orb) |
+[Orb reference](docs/reference/orb.md) |
+[CircleCI registry](https://circleci.com/developer/orbs/orb/vexcalibur-dev/vexcalibur) |
+[Releases](https://github.com/vexcalibur-dev/vexcalibur-orb/releases)
+
 The orb installs an exact Vexcalibur release into a temporary virtual environment for each invocation. It can run any Vexcalibur command. Common uses include generating a VEX document from a software bill of materials (SBOM) and querying an Open Source Vulnerabilities (OSV) service.
 
 ## Project status
